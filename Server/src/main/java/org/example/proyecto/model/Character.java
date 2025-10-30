@@ -1,5 +1,6 @@
 package org.example.proyecto.model;
 
+import org.example.proyecto.model.CharacterDTO;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
