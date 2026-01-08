@@ -1,6 +1,5 @@
 package org.example.proyecto.model;
 
-import org.example.proyecto.model.CharacterDTO;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
@@ -16,7 +15,7 @@ public class Character {
     }
 
     @Contract("_ -> new")
-    public static @NotNull Character fromDTO(CharacterDTO dto) {
+    public static @NotNull Character fromDTO(@NotNull CharacterDTO dto) {
         return new Character(dto.getName(), dto.getCategory(), dto.getLevel());
     }
 
