@@ -30,7 +30,7 @@ public class Campaign {
     private List<Scene> scenes;
 
     @OneToMany(mappedBy = "campaign", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Character> characters;
+    private List<GameCharacter> characters;
 
     @OneToMany(mappedBy = "campaign", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Item> items;

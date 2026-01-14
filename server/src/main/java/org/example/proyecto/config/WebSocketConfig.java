@@ -1,6 +1,7 @@
 package org.example.proyecto.config;
 
-import org.example.proyecto.service.GameWebSocketHandler;
+import org.example.proyecto.service.SessionManager;
+import org.example.proyecto.websocket.GameWebSocketHandler;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.*;
@@ -9,9 +10,17 @@ import org.springframework.web.socket.config.annotation.*;
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
 
+    private final SessionManager sessionManager;
+
+    public WebSocketConfig(SessionManager sessionManager) {
+        this.sessionManager = sessionManager;
+    }
+
     @Override
     public void registerWebSocketHandlers(@NotNull WebSocketHandlerRegistry registry) {
-        registry.addHandler(new GameWebSocketHandler(), "/game")
-                .setAllowedOrigins("*");
+        registry.addHandler(
+                new GameWebSocketHandler(sessionManager),
+                "/game"
+        ).setAllowedOrigins("*");
     }
 }

@@ -18,7 +18,7 @@ public class Item {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "character_id")
-    private Character character;
+    private GameCharacter character;
 
     @Column(nullable = false)
     private String name;
