@@ -1,6 +1,9 @@
 package org.example.proyecto.websocket;
 
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.example.proyecto.model.dto.*;
 import org.example.proyecto.service.GameSession;
@@ -21,7 +24,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class GameWebSocketHandler extends TextWebSocketHandler {
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = JsonMapper.builder()
+            .addModule(new JavaTimeModule())
+            .build();
+
     private final SessionManager sessionManager;
 
     private final Map<String, ConnectionInfo> connections = new ConcurrentHashMap<>();
@@ -102,9 +108,12 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                     log.warn("Unknown message type: {}", type);
                     sendError(session, "Unknown message type: " + type);
             }
+        } catch (JsonParseException e) {
+            log.warn("Malformed JSON received: {}", message.getPayload(), e);
+            sendError(session, "Malformed JSON");
         } catch (Exception e) {
             log.error("Error handling WebSocket message", e);
-            sendError(session, "Error processing message: " + e.getMessage());
+            sendError(session, "Internal error processing message");
         }
     }
 

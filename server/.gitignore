@@ -38,4 +38,3 @@ build/
 *.sqlite
 *.sqlite3
 database.db
-dnd_campaign.db
