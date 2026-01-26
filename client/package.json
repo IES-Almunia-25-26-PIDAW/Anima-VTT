@@ -1,0 +1,10 @@
+{
+  "name": "vtt-project",
+  "private": true,
+  "scripts": {
+    "web": "pnpm --filter @vtt/web dev",
+    "desktop": "pnpm --filter @vtt/desktop tauri dev",
+    "build:web": "pnpm --filter @vtt/web build",
+    "build:desktop": "pnpm --filter @vtt/desktop tauri build"
+  }
+}
