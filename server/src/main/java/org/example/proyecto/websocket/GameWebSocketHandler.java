@@ -3,6 +3,8 @@ package org.example.proyecto.websocket;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import org.example.proyecto.model.dto.*;
+import org.example.proyecto.model.entities.User;
+import org.example.proyecto.model.repositories.UserRepository;
 import org.example.proyecto.service.GameSession;
 import org.example.proyecto.service.SessionManager;
 import org.jetbrains.annotations.NotNull;
@@ -98,6 +100,10 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                     handleSaveSession(session);
                     break;
 
+                case "LOGIN":
+                    handleLogin(session, payload);
+                    break;
+
                 default:
                     log.warn("Unknown message type: {}", type);
                     sendError(session, "Unknown message type: " + type);
@@ -105,6 +111,29 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("Error handling WebSocket message", e);
             sendError(session, "Error processing message: " + e.getMessage());
+        }
+    }
+
+    private void handleLogin(@NotNull WebSocketSession session, @NotNull JsonNode payload) {
+        String username = payload.get("username").asText();
+        String password = payload.get("password").asText();
+
+        try {
+            User user = sessionManager.authenticateUser(username, password);
+
+            sendToSession(session, "LOGIN_SUCCESS", Map.of(
+                    "userId", user.getId(),
+                    "username", user.getUsername(),
+                    "role", user.getRole().toString()
+            ));
+
+            log.info("User {} logged in successfully", username);
+
+        } catch (Exception e) {
+            sendToSession(session, "LOGIN_ERROR", Map.of(
+                    "message", e.getMessage()
+            ));
+            log.error("Login error for user {}", username, e);
         }
     }
 

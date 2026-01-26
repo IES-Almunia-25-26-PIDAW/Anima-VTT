@@ -1,5 +1,7 @@
 package org.example.proyecto.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +30,9 @@ public class SessionManager {
 
     private final Map<Long, GameSession> sessions = new ConcurrentHashMap<>();
 
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
     // Repositories
     private final CampaignRepository campaignRepository;
     private final SceneRepository sceneRepository;
@@ -39,6 +44,18 @@ public class SessionManager {
     // -------------------------------
     // Gestión de sesiones
     // -------------------------------
+
+    @Transactional(readOnly = true)
+    public User authenticateUser(String username, String password) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+            throw new RuntimeException("Credenciales inválidas");
+        }
+
+        return user;
+    }
 
     @Transactional
     public GameSession getOrCreateSession(Long campaignId) {
