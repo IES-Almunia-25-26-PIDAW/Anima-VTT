@@ -1,5 +1,6 @@
 package org.example.proyecto.service;
 
+import org.example.proyecto.model.dto.UserDTO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,7 +47,7 @@ public class SessionManager {
     // -------------------------------
 
     @Transactional(readOnly = true)
-    public User authenticateUser(String username, String password) {
+    public UserDTO authenticateUser(String username, String password) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
@@ -54,7 +55,23 @@ public class SessionManager {
             throw new RuntimeException("Credenciales inválidas");
         }
 
-        return user;
+        return UserDTO.fromEntity(user);
+    }
+
+    @Transactional
+    public UserDTO registerUser(String username, String password, String email) {
+        if (userRepository.findByUsername(username).isPresent()) {
+            throw new RuntimeException("El nombre de usuario ya está en uso");
+        }
+
+        User newUser = new User();
+        newUser.setUsername(username);
+        newUser.setPasswordHash(passwordEncoder.encode(password));
+        newUser.setRole("player");
+
+        User savedUser = userRepository.save(newUser);
+
+        return UserDTO.fromEntity(savedUser);
     }
 
     @Transactional

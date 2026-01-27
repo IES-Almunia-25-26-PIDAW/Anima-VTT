@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.example.proyecto.model.dto.*;
-import org.example.proyecto.model.entities.User;
-import org.example.proyecto.model.repositories.UserRepository;
 import org.example.proyecto.service.GameSession;
 import org.example.proyecto.service.SessionManager;
 import org.jetbrains.annotations.NotNull;
@@ -109,6 +107,9 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                 case "LOGIN":
                     handleLogin(session, payload);
                     break;
+                case "REGISTER":
+                    handleRegister(session, payload);
+                    break;
 
                 default:
                     log.warn("Unknown message type: {}", type);
@@ -128,12 +129,12 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         String password = payload.get("password").asText();
 
         try {
-            User user = sessionManager.authenticateUser(username, password);
+            UserDTO user = sessionManager.authenticateUser(username, password);
 
             sendToSession(session, "LOGIN_SUCCESS", Map.of(
                     "userId", user.getId(),
                     "username", user.getUsername(),
-                    "role", user.getRole().toString()
+                    "role", user.getRole()
             ));
 
             log.info("User {} logged in successfully", username);
@@ -143,6 +144,30 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                     "message", e.getMessage()
             ));
             log.error("Login error for user {}", username, e);
+        }
+    }
+
+    private void handleRegister(@NotNull WebSocketSession session, @NotNull JsonNode payload) {
+        String username = payload.get("username").asText();
+        String password = payload.get("password").asText();
+        String email = payload.has("email") ? payload.get("email").asText() : null;
+
+        try {
+            UserDTO newUser = sessionManager.registerUser(username, password, email);
+
+            sendToSession(session, "REGISTER_SUCCESS", Map.of(
+                    "message", "Registro exitoso. Espera la aprobación del DM.",
+                    "userId", newUser.getId(),
+                    "username", newUser.getUsername()
+            ));
+
+            log.info("New user registered: {}", username);
+
+        } catch (Exception e) {
+            sendToSession(session, "REGISTER_ERROR", Map.of(
+                    "message", e.getMessage()
+            ));
+            log.error("Registration error for user {}", username, e);
         }
     }
 
