@@ -2,5 +2,8 @@
   "name": "@vtt/shared",
   "version": "1.0.0",
   "type": "module",
-  "main": "./src/index.ts"
+  "main": "./src/index.ts",
+  "devDependencies": {
+    "@types/node": "^24.10.9"
+  }
 }

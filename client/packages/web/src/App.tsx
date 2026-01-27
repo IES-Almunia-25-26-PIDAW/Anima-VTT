@@ -1,35 +1,48 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useState } from 'react';
+import Login from './components/Login';
+import SignIn from './components/SignIn';
+import type { LoginSuccess } from '@vtt/shared';
+
+type ViewType = 'login' | 'signin' | 'app';
 
 function App() {
-  const [count, setCount] = useState(0)
+    const [user, setUser] = useState<LoginSuccess | null>(null);
+    const [currentView, setCurrentView] = useState<ViewType>('login');
 
-  return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    const handleLoginSuccess = (userData: LoginSuccess) => {
+        setUser(userData);
+        setCurrentView('app');
+    };
+
+    const handleRegisterSuccess = () => {
+        setCurrentView('login');
+    };
+
+    if (currentView === 'signin') {
+        return (
+            <SignIn
+                onBackToLogin={() => setCurrentView('login')}
+                onRegisterSuccess={handleRegisterSuccess}
+            />
+        );
+    }
+
+    if (currentView === 'login') {
+        return (
+            <Login
+                onLoginSuccess={handleLoginSuccess}
+                onGoToSignIn={() => setCurrentView('signin')}
+            />
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-gray-900 text-white p-8">
+            <h1 className="text-3xl font-bold mb-4">Bienvenido, {user?.username}!</h1>
+            <p className="text-gray-300">Role: {user?.role}</p>
+            <p className="text-gray-300">User ID: {user?.userId}</p>
+        </div>
+    );
 }
 
-export default App
+export default App;
