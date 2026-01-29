@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getWebSocketService } from '@vtt/shared';
+import { getWebSocketService } from '../index';
 
 interface SignInProps {
     onBackToLogin: () => void;

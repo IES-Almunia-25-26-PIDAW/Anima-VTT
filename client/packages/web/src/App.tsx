@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import Login from './components/Login';
-import SignIn from './components/SignIn';
+import { Login, SignIn } from '@vtt/shared';
 import type { LoginSuccess } from '@vtt/shared';
 
 type ViewType = 'login' | 'signin' | 'app';

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getWebSocketService } from '@vtt/shared';
-import type { LoginSuccess } from '@vtt/shared';
+import { getWebSocketService } from '../index';
+import type { LoginSuccess } from '../index';
 
 interface LoginProps {
     onLoginSuccess: (user: LoginSuccess) => void;
