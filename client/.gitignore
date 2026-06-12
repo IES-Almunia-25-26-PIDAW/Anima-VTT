@@ -25,7 +25,6 @@ lerna-debug.log*
 # Editor directories y archivos
 .vscode/*
 !.vscode/extensions.json
-.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -64,11 +63,14 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 
-# Optional: si usas Turbo
 .turbo/
 
-# ZeroTier config (si guardas configuración)
+# ZeroTier config
 zerotier-config.json
 
 ### VS Code ###
 .vscode/
+
+### IntelliJ
+.idea
+.idea/
