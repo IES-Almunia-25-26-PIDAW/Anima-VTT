@@ -21,6 +21,9 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const view = useRef<View>({ panX: 0, panY: 0, zoom: 1 });
     const localPos = useRef(new Map<number, { x: number; y: number }>());
+    // Always-current ref so the keydown effect (registered once) can call the latest callback
+    const onTokenMoveRef = useRef(onTokenMove);
+    onTokenMoveRef.current = onTokenMove;
     const dragging = useRef<{
         tokenId: number;
         grabDx: number;
@@ -120,7 +123,9 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
                 ctx.font = `bold ${Math.round(r * 0.65)}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(String(token.characterId), cx, cy);
+                // Show first letter of character name as token label
+                const label = token.characterName ? token.characterName.charAt(0).toUpperCase() : String(token.characterId);
+                ctx.fillText(label, cx, cy);
             }
         }
     }
@@ -167,9 +172,45 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
         return () => ro.disconnect();
     }, []);
 
+    // Arrow-key movement for the selected token
+    useEffect(() => {
+        function handleKeyDown(e: KeyboardEvent) {
+            // Don't steal keys from text inputs
+            const tag = (document.activeElement as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+            const { selectedTokenId: sel, scene: s } = renderPropsRef.current;
+            if (sel == null) return;
+
+            const g = s.gridSize ?? 64;
+            let dx = 0, dy = 0;
+            if (e.key === 'ArrowLeft')  dx = -g;
+            else if (e.key === 'ArrowRight') dx = g;
+            else if (e.key === 'ArrowUp')    dy = -g;
+            else if (e.key === 'ArrowDown')  dy = g;
+            else return;
+
+            e.preventDefault();
+
+            const tokenId = sel as number;
+            const pos = localPos.current.get(tokenId) ?? { x: 0, y: 0 };
+            const rawX = pos.x + dx;
+            const rawY = pos.y + dy;
+            const finalX = Math.max(g / 2, Math.min(s.width  - g / 2, Math.floor(rawX / g) * g + g / 2));
+            const finalY = Math.max(g / 2, Math.min(s.height - g / 2, Math.floor(rawY / g) * g + g / 2));
+
+            localPos.current.set(tokenId, { x: finalX, y: finalY });
+            onTokenMoveRef.current(tokenId, finalX, finalY);
+            requestAnimationFrame(() => redrawRef.current());
+        }
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     // ── Hit testing ───────────────────────────────────────────────────────────
 
-    function canvasXY(e: React.PointerEvent | WheelEvent): [number, number] {
+    function canvasXY(e: { clientX: number; clientY: number }): [number, number] {
         const rect = canvasRef.current!.getBoundingClientRect();
         // Scale from CSS pixels to canvas pixels
         const scaleX = canvasRef.current!.width / rect.width;
@@ -244,8 +285,8 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
             const g = scene.gridSize ?? 64;
             const rawX = (cx - dragging.current.grabDx - panX) / zoom;
             const rawY = (cy - dragging.current.grabDy - panY) / zoom;
-            const finalX = Math.max(0, Math.min(scene.width, Math.round(rawX / g) * g));
-            const finalY = Math.max(0, Math.min(scene.height, Math.round(rawY / g) * g));
+            const finalX = Math.max(g / 2, Math.min(scene.width - g / 2, Math.floor(rawX / g) * g + g / 2));
+            const finalY = Math.max(g / 2, Math.min(scene.height - g / 2, Math.floor(rawY / g) * g + g / 2));
 
             localPos.current.set(dragging.current.tokenId, { x: finalX, y: finalY });
             onTokenMove(dragging.current.tokenId, finalX, finalY);
@@ -272,8 +313,10 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
         const cy = (e.clientY - rect.top) * scaleY;
         const { panX, panY, zoom } = view.current;
         const g = scene.gridSize ?? 64;
-        const finalX = Math.max(0, Math.min(scene.width, Math.round(((cx - panX) / zoom) / g) * g));
-        const finalY = Math.max(0, Math.min(scene.height, Math.round(((cy - panY) / zoom) / g) * g));
+        const rawX = (cx - panX) / zoom;
+        const rawY = (cy - panY) / zoom;
+        const finalX = Math.max(g / 2, Math.min(scene.width - g / 2, Math.floor(rawX / g) * g + g / 2));
+        const finalY = Math.max(g / 2, Math.min(scene.height - g / 2, Math.floor(rawY / g) * g + g / 2));
 
         localPos.current.set(tokenId, { x: finalX, y: finalY });
         onTokenMove(tokenId, finalX, finalY);

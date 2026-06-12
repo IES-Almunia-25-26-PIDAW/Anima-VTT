@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { NormalizedState, CombatState } from './state';
 import { initialState } from './initialState';
-import type { Token, Scene, Character, ChatMessage, User } from '../models';
+import type { Token, Scene, Character, CharacterType, ChatMessage, User } from '../models';
 import type { WebSocketService } from '../websocket';
 import type { ID } from './types';
 
@@ -48,6 +48,7 @@ function normalizeToken(t: any): Token {
         id: t.tokenId,
         sceneId: t.sceneId,
         characterId: t.characterId,
+        characterName: t.characterName ?? 'Desconocido',
         x: t.xPosition,
         y: t.yPosition,
         rotation: t.rotation ?? 0,
@@ -55,6 +56,21 @@ function normalizeToken(t: any): Token {
         locked: t.isLocked ?? false,
         hpOverride: t.hpOverride ?? undefined,
         statusEffects: t.statusEffectsJson ? JSON.parse(t.statusEffectsJson) : [],
+    };
+}
+
+// Server CharacterState DTO → frontend Character model
+function normalizeCharacter(c: any, campaignId: ID): Character {
+    return {
+        id: c.characterId,
+        campaignId,
+        name: c.name,
+        type: c.type as CharacterType,
+        attributes: c.attributesJson ? JSON.parse(c.attributesJson) : {},
+        biography: c.biography ?? undefined,
+        portraitPath: undefined,
+        tokenIds: [],
+        itemIds: [],
     };
 }
 
@@ -166,7 +182,7 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
         set(() => ({ connectedUsers: users })),
 
     applySessionState: (payload) => {
-        const { campaignId, activeScene, tokens, connectedUsers, inCombat, combatState, fogOfWar } = payload;
+        const { campaignId, activeScene, tokens, characters, connectedUsers, inCombat, combatState, fogOfWar } = payload;
 
         const tokensRecord = buildTokensRecord(tokens ?? []);
 
@@ -176,11 +192,18 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
             scenesRecord[scene.id] = scene;
         }
 
+        const charsRecord: Record<ID, Character> = {};
+        for (const c of (characters ?? [])) {
+            const char = normalizeCharacter(c, campaignId);
+            charsRecord[char.id] = char;
+        }
+
         set((s) => ({
             entities: {
                 ...s.entities,
                 tokens: tokensRecord,
                 scenes: { ...s.entities.scenes, ...scenesRecord },
+                characters: charsRecord,
             },
             ui: {
                 ...s.ui,
@@ -268,7 +291,7 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
                 id: Date.now(),
                 campaignId,
                 userId: roll.userId,
-                message: `${roll.formula}: ${roll.result} (${roll.details})`,
+                message: `${roll.formula} → ${roll.details}`,
                 messageType: 'roll',
                 data: { username: roll.username, roll },
                 timestamp: roll.timestamp,
@@ -282,6 +305,15 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
         ws.on('USER_LEFT', (payload) => {
             const updated = get().connectedUsers.filter((u) => u !== payload.username);
             get().setConnectedUsers(updated);
+        });
+
+        ws.on('CHARACTER_UPDATED', (payload) => {
+            const existing = get().entities.characters[payload.characterId];
+            if (!existing) return;
+            get().upsertCharacter({
+                ...existing,
+                attributes: JSON.parse(payload.attributesJson),
+            });
         });
     },
 }));

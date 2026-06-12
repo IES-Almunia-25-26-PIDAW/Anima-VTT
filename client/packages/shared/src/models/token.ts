@@ -3,6 +3,7 @@ export interface Token {
 
     sceneId: number;
     characterId: number;
+    characterName: string;
 
     x: number;
     y: number;
