@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store/useStore';
 import { getWebSocketService } from '../websocket';
@@ -41,6 +41,18 @@ export default function GameView({ onLeave }: GameViewProps) {
     });
     const combat = useStore((s) => s.combat);
     const characters = useStore((s) => s.entities.characters);
+
+    const hpMap = useMemo(() => {
+        const result: Record<number, [number, number]> = {};
+        for (const t of tokens) {
+            if (t.characterId == null) continue;
+            const attrs = characters[t.characterId]?.attributes as AnimaAttributes | undefined;
+            const max = attrs?.maxPV ?? 0;
+            if (max <= 0) continue;
+            result[t.id] = [attrs?.currentPV ?? max, max];
+        }
+        return result;
+    }, [tokens, characters]);
 
     // Auto-switch to character sheet when a token is selected
     useEffect(() => {
@@ -353,10 +365,12 @@ export default function GameView({ onLeave }: GameViewProps) {
                             scene={activeScene}
                             tokens={tokens}
                             selectedTokenId={selectedTokenId as number | undefined}
+                            currentTurnTokenId={combat.combatState?.currentTurnTokenId as number | undefined}
                             onTokenSelect={(id) => useStore.getState().selectToken(id)}
                             onTokenMove={(tokenId, x, y) =>
                                 getWebSocketService().send('TOKEN_MOVE', { tokenId, x, y })
                             }
+                            hpMap={hpMap}
                         />
                     ) : (
                         <div className="flex items-center justify-center h-full text-center text-gray-600 select-none">

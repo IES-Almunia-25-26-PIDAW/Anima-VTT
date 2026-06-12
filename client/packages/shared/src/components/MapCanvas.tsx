@@ -5,8 +5,10 @@ interface MapCanvasProps {
     scene: Scene;
     tokens: Token[];
     selectedTokenId?: number;
+    currentTurnTokenId?: number;
     onTokenSelect: (id: number | undefined) => void;
     onTokenMove: (tokenId: number, x: number, y: number) => void;
+    hpMap?: Record<number, [number, number]>; // tokenId → [current, max]
 }
 
 const PALETTE = ['#60a5fa', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#fb923c', '#38bdf8', '#4ade80'];
@@ -17,7 +19,7 @@ function tokenColor(id: number) {
 
 interface View { panX: number; panY: number; zoom: number; }
 
-export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelect, onTokenMove }: MapCanvasProps) {
+export default function MapCanvas({ scene, tokens, selectedTokenId, currentTurnTokenId, onTokenSelect, onTokenMove, hpMap }: MapCanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const view = useRef<View>({ panX: 0, panY: 0, zoom: 1 });
     const localPos = useRef(new Map<number, { x: number; y: number }>());
@@ -33,6 +35,7 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
         startCx: number; startCy: number;
         startPanX: number; startPanY: number;
     } | null>(null);
+    const panAnimRef = useRef<number | null>(null);
 
     // Sync store positions → localPos (skip the token being dragged)
     useEffect(() => {
@@ -45,8 +48,8 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
 
     // ── Drawing ───────────────────────────────────────────────────────────────
 
-    const renderPropsRef = useRef({ scene, tokens, selectedTokenId });
-    renderPropsRef.current = { scene, tokens, selectedTokenId };
+    const renderPropsRef = useRef({ scene, tokens, selectedTokenId, currentTurnTokenId, hpMap });
+    renderPropsRef.current = { scene, tokens, selectedTokenId, currentTurnTokenId, hpMap };
 
     const redrawRef = useRef(() => {});
 
@@ -57,7 +60,7 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
         if (!ctx) return;
 
         const { panX, panY, zoom } = view.current;
-        const { scene: s, tokens: toks, selectedTokenId: sel } = renderPropsRef.current;
+        const { scene: s, tokens: toks, selectedTokenId: sel, currentTurnTokenId: activeTurnId, hpMap: hp } = renderPropsRef.current;
         const W = canvas.width;
         const H = canvas.height;
         const g = s.gridSize ?? 64;
@@ -95,6 +98,17 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
             const color = tokenColor(token.id);
             const isSelected = token.id === sel;
 
+            // Active turn indicator — drawn first so other rings sit on top
+            if (activeTurnId != null && token.id === activeTurnId) {
+                ctx.beginPath();
+                ctx.arc(cx, cy, r + 10, 0, Math.PI * 2);
+                ctx.setLineDash([8, 4]);
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
             if (isSelected) {
                 ctx.beginPath();
                 ctx.arc(cx, cy, r + 5, 0, Math.PI * 2);
@@ -123,9 +137,29 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
                 ctx.font = `bold ${Math.round(r * 0.65)}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                // Show first letter of character name as token label
                 const label = token.characterName ? token.characterName.charAt(0).toUpperCase() : String(token.characterId);
                 ctx.fillText(label, cx, cy);
+            }
+
+            // HP bar below the token circle
+            const hpEntry = hp?.[token.id];
+            if (hpEntry && hpEntry[1] > 0) {
+                const [current, max] = hpEntry;
+                const pct = Math.max(0, Math.min(1, current / max));
+                const barW = r * 1.6;
+                const barH = Math.max(3, r * 0.18);
+                const barX = cx - barW / 2;
+                const barY = cy + r + 4;
+                const barColor = pct > 0.5 ? '#22c55e' : pct > 0.25 ? '#eab308' : '#ef4444';
+
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+
+                ctx.fillStyle = '#374151';
+                ctx.fillRect(barX, barY, barW, barH);
+
+                ctx.fillStyle = barColor;
+                ctx.fillRect(barX, barY, barW * pct, barH);
             }
         }
     }
@@ -171,6 +205,38 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
         ro.observe(canvas);
         return () => ro.disconnect();
     }, []);
+
+    // Smooth-pan to the active turn token whenever it changes
+    useEffect(() => {
+        if (currentTurnTokenId == null) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const pos = localPos.current.get(currentTurnTokenId);
+        if (!pos) return;
+
+        const { zoom } = view.current;
+        const targetPanX = canvas.width  / 2 - pos.x * zoom;
+        const targetPanY = canvas.height / 2 - pos.y * zoom;
+
+        if (panAnimRef.current) cancelAnimationFrame(panAnimRef.current);
+
+        function step() {
+            const dx = targetPanX - view.current.panX;
+            const dy = targetPanY - view.current.panY;
+            if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+                view.current.panX = targetPanX;
+                view.current.panY = targetPanY;
+                redrawRef.current();
+                panAnimRef.current = null;
+                return;
+            }
+            view.current.panX += dx * 0.12;
+            view.current.panY += dy * 0.12;
+            redrawRef.current();
+            panAnimRef.current = requestAnimationFrame(step);
+        }
+        panAnimRef.current = requestAnimationFrame(step);
+    }, [currentTurnTokenId]);
 
     // Arrow-key movement for the selected token
     useEffect(() => {
@@ -253,6 +319,10 @@ export default function MapCanvas({ scene, tokens, selectedTokenId, onTokenSelec
             };
             onTokenSelect(hit.id);
         } else {
+            if (panAnimRef.current) {
+                cancelAnimationFrame(panAnimRef.current);
+                panAnimRef.current = null;
+            }
             panning.current = {
                 startCx: cx, startCy: cy,
                 startPanX: view.current.panX,
