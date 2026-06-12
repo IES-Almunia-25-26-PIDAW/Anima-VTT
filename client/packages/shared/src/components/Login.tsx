@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getWebSocketService } from '../index';
-import type { LoginSuccess } from '../index';
+import { getWebSocketService } from '../websocket';
+import type { LoginSuccess } from '../websocket';
 
 interface LoginProps {
     onLoginSuccess: (user: LoginSuccess) => void;

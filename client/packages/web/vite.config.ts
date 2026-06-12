@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@vtt/shared': path.resolve(__dirname, '../shared/src')
-    }
+    },
+    dedupe: ['react', 'react-dom', 'zustand'],
   }
 })
