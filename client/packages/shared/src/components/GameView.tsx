@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store/useStore';
 import { getWebSocketService } from '../websocket';
+import MapCanvas from './MapCanvas';
 
 interface GameViewProps {
     onLeave: () => void;
@@ -18,12 +20,15 @@ export default function GameView({ onLeave }: GameViewProps) {
         const id = s.ui.activeSceneId;
         return id != null ? s.entities.scenes[id] : null;
     });
-    const tokens = useStore((s) => Object.values(s.entities.tokens));
+    const tokens = useStore(useShallow((s) => Object.values(s.entities.tokens)));
     const connectedUsers = useStore((s) => s.connectedUsers);
+    const selectedTokenId = useStore((s) => s.ui.selectedTokenId);
     const combat = useStore((s) => s.combat);
-    const chatMessages = useStore((s) =>
-        Object.values(s.entities.chatMessages).sort((a, b) =>
-            a.timestamp < b.timestamp ? -1 : 1
+    const chatMessages = useStore(
+        useShallow((s) =>
+            Object.values(s.entities.chatMessages).sort((a, b) =>
+                a.timestamp < b.timestamp ? -1 : 1
+            )
         )
     );
 
@@ -107,31 +112,45 @@ export default function GameView({ onLeave }: GameViewProps) {
                             {tokens.map((t) => (
                                 <li
                                     key={t.id}
-                                    className={`text-sm px-2 py-1 rounded cursor-pointer transition ${t.visible ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-600 hover:bg-gray-700'}`}
+                                    draggable
+                                    onDragStart={(e) => {
+                                        e.dataTransfer.setData('text/plain', String(t.id));
+                                        e.dataTransfer.effectAllowed = 'move';
+                                    }}
+                                    onClick={() => useStore.getState().selectToken(t.id)}
+                                    className={`text-sm px-2 py-1 rounded select-none transition ${
+                                        t.id === selectedTokenId
+                                            ? 'bg-blue-700 text-white cursor-grabbing'
+                                            : t.visible
+                                                ? 'text-gray-300 hover:bg-gray-700 cursor-grab'
+                                                : 'text-gray-600 hover:bg-gray-700 cursor-grab'
+                                    }`}
                                 >
-                                    {t.visible ? '👁' : '🚫'} Token #{t.id}
+                                    {t.visible ? '●' : '○'} Token #{t.id}
                                 </li>
                             ))}
                         </ul>
                     </section>
                 </aside>
 
-                {/* Main area: map placeholder */}
-                <main className="flex-1 bg-gray-950 flex items-center justify-center relative overflow-hidden">
+                {/* Main area: map canvas */}
+                <main className="flex-1 bg-gray-950 relative overflow-hidden">
                     {activeScene ? (
-                        <div className="text-center text-gray-600 select-none">
-                            <div className="text-6xl mb-4">🗺</div>
-                            <p className="text-xl font-semibold text-gray-500">{activeScene.name}</p>
-                            <p className="text-sm mt-1">
-                                {activeScene.width}×{activeScene.height}px
-                                {activeScene.gridSize && ` · cuadrícula ${activeScene.gridSize}px`}
-                                {` · ${tokens.length} token${tokens.length !== 1 ? 's' : ''}`}
-                            </p>
-                        </div>
+                        <MapCanvas
+                            scene={activeScene}
+                            tokens={tokens}
+                            selectedTokenId={selectedTokenId as number | undefined}
+                            onTokenSelect={(id) => useStore.getState().selectToken(id)}
+                            onTokenMove={(tokenId, x, y) =>
+                                getWebSocketService().send('TOKEN_MOVE', { tokenId, x, y })
+                            }
+                        />
                     ) : (
-                        <div className="text-center text-gray-600 select-none">
-                            <div className="text-6xl mb-4">🎲</div>
-                            <p className="text-gray-500">Sin escena activa</p>
+                        <div className="flex items-center justify-center h-full text-center text-gray-600 select-none">
+                            <div>
+                                <div className="text-6xl mb-4">🎲</div>
+                                <p className="text-gray-500">Sin escena activa</p>
+                            </div>
                         </div>
                     )}
                 </main>
