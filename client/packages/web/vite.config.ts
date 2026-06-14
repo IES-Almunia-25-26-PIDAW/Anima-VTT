@@ -9,5 +9,9 @@ export default defineConfig({
       '@vtt/shared': path.resolve(__dirname, '../shared/src')
     },
     dedupe: ['react', 'react-dom', 'zustand'],
-  }
+  },
+  server: {
+    host: true,   // bind to 0.0.0.0 so players on the VPN can reach the dev server
+    port: 5173,
+  },
 })

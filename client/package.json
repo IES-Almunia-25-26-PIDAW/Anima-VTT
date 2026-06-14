@@ -5,6 +5,8 @@
     "web": "pnpm --filter @vtt/web dev",
     "desktop": "pnpm --filter @vtt/desktop tauri dev",
     "build:web": "pnpm --filter @vtt/web build",
-    "build:desktop": "pnpm --filter @vtt/desktop tauri build"
+    "build:desktop": "pnpm --filter @vtt/desktop tauri build",
+    "test": "pnpm --filter @vtt/shared test",
+    "test:coverage": "pnpm --filter @vtt/shared test:coverage"
   }
 }
