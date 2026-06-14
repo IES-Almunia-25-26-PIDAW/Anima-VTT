@@ -6,7 +6,10 @@ import {
     Item,
     Asset,
     ChatMessage,
-    User
+    User,
+    ConnectedUser,
+    JournalFolder,
+    JournalEntry,
 } from "../models";
 import {ID} from "./types";
 
@@ -46,6 +49,33 @@ export interface NormalizedState {
         combatState: CombatState | null;
     };
 
-    connectedUsers: string[];
+    connectedUsers: ConnectedUser[];
     fogOfWar: boolean;
+    revealedCells: string[];
+    journal: {
+        folders: Record<ID, JournalFolder>;
+        entries: Record<ID, JournalEntry>;
+    };
+    pings: MapPing[];
+    areas: MapArea[];
+}
+
+export interface MapPing {
+    id: string;
+    x: number;
+    y: number;
+    username: string;
+    startMs: number;
+}
+
+export interface MapArea {
+    id: string;
+    type: 'circle' | 'rect';
+    x: number;
+    y: number;
+    x2: number;
+    y2: number;
+    color: string;
+    ownerUserId: number;
+    username: string;
 }

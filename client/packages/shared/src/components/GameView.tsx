@@ -2,8 +2,12 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store/useStore';
 import { getWebSocketService } from '../websocket';
+import { API_CONFIG } from '../config';
 import MapCanvas from './MapCanvas';
 import CharacterSheet from './CharacterSheet';
+import Journal from './Journal';
+import CharacterCreator from './CharacterCreator';
+import { importCharacterFromExcel } from '../utils/excelCharacter';
 import { parseRollCommand, roll, rollInitiativeD100 } from '../utils/diceRoller';
 import { calcTurno, isAnimaFormat } from '../utils/animaCalc';
 import type { AnimaAttributes } from '../models/character';
@@ -15,11 +19,20 @@ interface GameViewProps {
 
 export default function GameView({ onLeave }: GameViewProps) {
     const [chatInput, setChatInput] = useState('');
-    const [rightTab, setRightTab] = useState<'chat' | 'sheet'>('chat');
+    const [rightTab, setRightTab] = useState<'chat' | 'sheet' | 'journal'>('chat');
     const [saveFeedback, setSaveFeedback] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [showCombatSetup, setShowCombatSetup] = useState(false);
     const [combatParticipants, setCombatParticipants] = useState<Set<number>>(new Set());
     const [rolledInitiatives, setRolledInitiatives] = useState<Record<number, { rolled: number; bonus: number; total: number }>>({});
+    const [showCreator, setShowCreator] = useState(false);
+    const [importError, setImportError] = useState<string | null>(null);
+    const importRef = useRef<HTMLInputElement>(null);
+    const [showBgPanel, setShowBgPanel] = useState(false);
+    const [bgImages, setBgImages] = useState<string[]>([]);
+    const [bgUploading, setBgUploading] = useState(false);
+    const [showNewScene, setShowNewScene] = useState(false);
+    const [newSceneName, setNewSceneName] = useState('');
+    const [browseCharId, setBrowseCharId] = useState<number | null>(null);
     const lastReorderedAsalto = useRef(0);
     const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -31,6 +44,7 @@ export default function GameView({ onLeave }: GameViewProps) {
         const id = s.ui.activeSceneId;
         return id != null ? s.entities.scenes[id] : null;
     });
+    const allScenes = useStore(useShallow((s) => Object.values(s.entities.scenes)));
     const tokens = useStore(useShallow((s) => Object.values(s.entities.tokens)));
     const connectedUsers = useStore((s) => s.connectedUsers);
     const selectedTokenId = useStore((s) => s.ui.selectedTokenId);
@@ -41,6 +55,26 @@ export default function GameView({ onLeave }: GameViewProps) {
     });
     const combat = useStore((s) => s.combat);
     const characters = useStore((s) => s.entities.characters);
+    const unplacedCharacters = useStore(useShallow((s) => {
+        const placedCharIds = new Set(Object.values(s.entities.tokens).map((t) => t.characterId));
+        return Object.values(s.entities.characters).filter((c) => !placedCharIds.has(c.id));
+    }));
+    const ownedCharacters = useStore(useShallow((s) => {
+        const uid = s.session.currentUserId;
+        if (uid == null) return [];
+        return Object.values(s.entities.characters).filter((c) => c.ownerUserId === uid);
+    }));
+    const fogOfWar = useStore((s) => s.fogOfWar);
+    const revealedCells = useStore((s) => s.revealedCells);
+    const [fogPaintMode, setFogPaintMode] = useState<'reveal' | 'hide' | null>(null);
+    const [rulerMode, setRulerMode] = useState<'free' | 'snap' | null>(null);
+    const [pingMode, setPingMode] = useState(false);
+    const pings = useStore(useShallow((s) => s.pings));
+    const [areaMode, setAreaMode] = useState<'circle' | 'rect' | null>(null);
+    const [areaSnap, setAreaSnap] = useState<'free' | 'center' | 'corner'>('corner');
+    const [areaColor, setAreaColor] = useState('#ef4444');
+    const areas = useStore(useShallow((s) => s.areas));
+    const AREA_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#ffffff'];
 
     const hpMap = useMemo(() => {
         const result: Record<number, [number, number]> = {};
@@ -54,10 +88,24 @@ export default function GameView({ onLeave }: GameViewProps) {
         return result;
     }, [tokens, characters]);
 
+    const portraits = useStore(useShallow((s) => {
+        const result: Record<number, string> = {};
+        for (const c of Object.values(s.entities.characters)) {
+            if (c.portraitPath) result[c.id] = c.portraitPath;
+        }
+        return result;
+    }));
+
+    const viewCharacterId = selectedCharacterId ?? browseCharId;
+
     // Auto-switch to character sheet when a token is selected
     useEffect(() => {
-        setRightTab(selectedTokenId != null ? 'sheet' : 'chat');
+        if (selectedTokenId != null) setRightTab('sheet');
     }, [selectedTokenId]);
+
+    useEffect(() => {
+        if (!fogOfWar) setFogPaintMode(null);
+    }, [fogOfWar]);
     const chatMessages = useStore(
         useShallow((s) =>
             Object.values(s.entities.chatMessages).sort((a, b) =>
@@ -191,9 +239,69 @@ export default function GameView({ onLeave }: GameViewProps) {
         getWebSocketService().send('SAVE_SESSION', {});
     };
 
+    const handleAssignOwner = (characterId: number, userId: number | null) => {
+        getWebSocketService().send('ASSIGN_CHARACTER', { characterId, ownerUserId: userId });
+    };
+
+    const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        setImportError(null);
+        try {
+            const result = await importCharacterFromExcel(file);
+            getWebSocketService().send('CREATE_CHARACTER', {
+                name: result.name,
+                type: result.type,
+                attributesJson: result.attributesJson,
+                biography: result.biography,
+            });
+        } catch (err) {
+            setImportError(err instanceof Error ? err.message : 'Error al leer el archivo.');
+        }
+    };
+
     const handleLeave = () => {
         getWebSocketService().send('LEAVE_CAMPAIGN', {});
         onLeave();
+    };
+
+    const openBgPanel = async () => {
+        setShowBgPanel(true);
+        try {
+            const res = await fetch(`${API_CONFIG.baseURL}/api/uploads`);
+            const urls: string[] = await res.json();
+            setBgImages(urls);
+        } catch {
+            setBgImages([]);
+        }
+    };
+
+    const applyBg = (path: string | null) => {
+        if (!activeScene) return;
+        getWebSocketService().send('UPDATE_SCENE', {
+            sceneId: activeScene.id,
+            backgroundImagePath: path,
+        });
+        setShowBgPanel(false);
+    };
+
+    const handleBgUpload = async (file: File) => {
+        setBgUploading(true);
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch(`${API_CONFIG.baseURL}/api/uploads`, { method: 'POST', body: form });
+            const data = await res.json();
+            if (data.url) {
+                setBgImages((prev) => [...prev, data.url]);
+                applyBg(data.url);
+            }
+        } catch {
+            // upload failed — silently ignore, panel stays open
+        } finally {
+            setBgUploading(false);
+        }
     };
 
     return (
@@ -202,7 +310,67 @@ export default function GameView({ onLeave }: GameViewProps) {
             <header className="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
                     <h1 className="text-lg font-bold">VTT</h1>
-                    {activeScene && (
+                    {allScenes.length > 0 && currentUser?.role === 'gm' ? (
+                        <div className="flex items-center gap-2">
+                            <span className="text-gray-500 text-sm">Escena:</span>
+                            <select
+                                value={activeScene?.id ?? ''}
+                                onChange={(e) => {
+                                    const id = Number(e.target.value);
+                                    if (id && id !== activeScene?.id) {
+                                        getWebSocketService().send('CHANGE_SCENE', { sceneId: id });
+                                    }
+                                }}
+                                className="bg-gray-700 border border-gray-600 text-blue-300 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                                {allScenes.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                            </select>
+                            {showNewScene ? (
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        value={newSceneName}
+                                        onChange={(e) => setNewSceneName(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && newSceneName.trim()) {
+                                                getWebSocketService().send('CREATE_SCENE', { name: newSceneName.trim() });
+                                                setNewSceneName('');
+                                                setShowNewScene(false);
+                                            } else if (e.key === 'Escape') {
+                                                setNewSceneName('');
+                                                setShowNewScene(false);
+                                            }
+                                        }}
+                                        placeholder="Nombre de escena"
+                                        className="bg-gray-700 border border-blue-500 text-white text-sm rounded px-2 py-1 w-36 focus:outline-none"
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            if (newSceneName.trim()) {
+                                                getWebSocketService().send('CREATE_SCENE', { name: newSceneName.trim() });
+                                            }
+                                            setNewSceneName('');
+                                            setShowNewScene(false);
+                                        }}
+                                        className="text-green-400 hover:text-green-300 text-sm px-1"
+                                    >✓</button>
+                                    <button
+                                        onClick={() => { setNewSceneName(''); setShowNewScene(false); }}
+                                        className="text-gray-500 hover:text-gray-300 text-sm px-1"
+                                    >✕</button>
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => setShowNewScene(true)}
+                                    className="text-gray-400 hover:text-white text-lg leading-none px-1"
+                                    title="Nueva escena"
+                                >+</button>
+                            )}
+                        </div>
+                    ) : activeScene && (
                         <span className="text-gray-400 text-sm">
                             Escena: <span className="text-blue-400 font-medium">{activeScene.name}</span>
                         </span>
@@ -241,6 +409,112 @@ export default function GameView({ onLeave }: GameViewProps) {
                                 </>
                             )}
                             <button
+                                onClick={() => getWebSocketService().send('TOGGLE_FOG_OF_WAR', {})}
+                                className={`text-sm py-1.5 px-4 rounded-lg transition ${
+                                    fogOfWar
+                                        ? 'bg-indigo-700 hover:bg-indigo-600 text-white'
+                                        : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                                }`}
+                            >
+                                {fogOfWar ? 'Niebla ON' : 'Niebla'}
+                            </button>
+                            {fogOfWar && (
+                                <>
+                                    <button
+                                        onClick={() => setFogPaintMode((m) => m === 'reveal' ? null : 'reveal')}
+                                        className={`text-sm py-1.5 px-3 rounded-lg transition ${
+                                            fogPaintMode === 'reveal'
+                                                ? 'bg-green-700 hover:bg-green-600 text-white'
+                                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                                        }`}
+                                        title="Revelar celdas"
+                                    >
+                                        Revelar
+                                    </button>
+                                    <button
+                                        onClick={() => setFogPaintMode((m) => m === 'hide' ? null : 'hide')}
+                                        className={`text-sm py-1.5 px-3 rounded-lg transition ${
+                                            fogPaintMode === 'hide'
+                                                ? 'bg-red-800 hover:bg-red-700 text-white'
+                                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                                        }`}
+                                        title="Ocultar celdas"
+                                    >
+                                        Ocultar
+                                    </button>
+                                    {revealedCells.length > 0 && (
+                                        <button
+                                            onClick={() => getWebSocketService().send('PAINT_FOG_CELLS', { cells: revealedCells, revealed: false })}
+                                            className="text-sm py-1.5 px-3 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-400 transition"
+                                            title="Borrar todas las áreas reveladas"
+                                        >
+                                            Limpiar
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                            <div className="relative">
+                                <button
+                                    onClick={openBgPanel}
+                                    className="text-sm py-1.5 px-4 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition"
+                                >
+                                    Fondo
+                                </button>
+                                {showBgPanel && (
+                                    <div className="absolute right-0 top-full mt-1 z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 w-72">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wider">Imagen de fondo</span>
+                                            <button onClick={() => setShowBgPanel(false)} className="text-gray-400 hover:text-white text-sm">✕</button>
+                                        </div>
+
+                                        {/* Upload button */}
+                                        <label className={`flex items-center justify-center gap-2 w-full py-2 px-3 rounded-lg border-2 border-dashed cursor-pointer transition mb-2 text-sm ${bgUploading ? 'border-gray-600 text-gray-500 cursor-not-allowed' : 'border-blue-600 text-blue-400 hover:border-blue-400 hover:text-blue-300'}`}>
+                                            {bgUploading ? 'Subiendo…' : '+ Subir imagen'}
+                                            <input
+                                                type="file"
+                                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                                className="hidden"
+                                                disabled={bgUploading}
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (file) handleBgUpload(file);
+                                                }}
+                                            />
+                                        </label>
+
+                                        {/* Clear button */}
+                                        <button
+                                            onClick={() => applyBg(null)}
+                                            className="w-full text-sm py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 mb-2 transition"
+                                        >
+                                            Sin fondo
+                                        </button>
+
+                                        {/* Gallery */}
+                                        {bgImages.length > 0 && (
+                                            <>
+                                                <div className="text-xs text-gray-500 mb-1">Imágenes guardadas</div>
+                                                <div className="grid grid-cols-3 gap-1.5 max-h-48 overflow-y-auto">
+                                                    {bgImages.map((url) => (
+                                                        <button
+                                                            key={url}
+                                                            onClick={() => applyBg(url)}
+                                                            className={`aspect-square rounded overflow-hidden border-2 transition ${activeScene?.backgroundImagePath === url ? 'border-blue-500' : 'border-transparent hover:border-gray-400'}`}
+                                                        >
+                                                            <img
+                                                                src={`${API_CONFIG.baseURL}${url}`}
+                                                                alt=""
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            <button
                                 onClick={handleSave}
                                 disabled={saveFeedback !== 'idle'}
                                 className={`text-sm py-1.5 px-4 rounded-lg transition ${
@@ -254,6 +528,64 @@ export default function GameView({ onLeave }: GameViewProps) {
                                 {saveFeedback === 'saved' ? 'Guardado ✓' : saveFeedback === 'saving' ? 'Guardando…' : 'Guardar'}
                             </button>
                         </>
+                    )}
+                    <button
+                        onClick={() => setRulerMode((m) => m === null ? 'free' : m === 'free' ? 'snap' : null)}
+                        className={`text-sm py-1.5 px-3 rounded-lg transition ${
+                            rulerMode === 'snap'
+                                ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                                : rulerMode === 'free'
+                                    ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                        }`}
+                        title={rulerMode === 'snap' ? 'Regla: centro de celdas' : rulerMode === 'free' ? 'Regla: libre' : 'Regla de distancia'}
+                    >
+                        {rulerMode === 'snap' ? 'Regla: Celdas' : rulerMode === 'free' ? 'Regla: Libre' : 'Regla'}
+                    </button>
+                    <button
+                        onClick={() => setPingMode((m) => !m)}
+                        className={`text-sm py-1.5 px-3 rounded-lg transition ${
+                            pingMode
+                                ? 'bg-orange-600 hover:bg-orange-500 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                        }`}
+                        title="Marcar punto de atención"
+                    >
+                        Ping
+                    </button>
+                    <button
+                        onClick={() => setAreaMode((m) => m === null ? 'circle' : m === 'circle' ? 'rect' : null)}
+                        className={`text-sm py-1.5 px-3 rounded-lg transition ${
+                            areaMode
+                                ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                        }`}
+                        title={areaMode === 'circle' ? 'Área: Círculo (click → Rect)' : areaMode === 'rect' ? 'Área: Rectángulo (click → off)' : 'Herramienta de área'}
+                    >
+                        {areaMode === 'circle' ? '○ Área' : areaMode === 'rect' ? '□ Área' : 'Área'}
+                    </button>
+                    {areaMode && (
+                        <div className="flex items-center gap-1.5 bg-gray-700/60 rounded-lg px-2 py-1">
+                            {(['corner', 'center', 'free'] as const).map((s) => (
+                                <button
+                                    key={s}
+                                    onClick={() => setAreaSnap(s)}
+                                    className={`text-xs px-1.5 py-0.5 rounded transition ${areaSnap === s ? 'bg-gray-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                                    title={s === 'corner' ? 'Esquinas de celda' : s === 'center' ? 'Centro de celda' : 'Libre'}
+                                >
+                                    {s === 'corner' ? '⊞' : s === 'center' ? '⊕' : '✦'}
+                                </button>
+                            ))}
+                            <span className="w-px h-4 bg-gray-600 mx-0.5" />
+                            {AREA_COLORS.map((c) => (
+                                <button
+                                    key={c}
+                                    onClick={() => setAreaColor(c)}
+                                    style={{ backgroundColor: c }}
+                                    className={`w-4 h-4 rounded-full transition-transform ${areaColor === c ? 'ring-2 ring-white ring-offset-1 ring-offset-gray-800 scale-125' : 'hover:scale-110'}`}
+                                />
+                            ))}
+                        </div>
                     )}
                     {currentUser && (
                         <span className="text-gray-400 text-sm">
@@ -281,9 +613,12 @@ export default function GameView({ onLeave }: GameViewProps) {
                         </h2>
                         <ul className="space-y-1.5">
                             {connectedUsers.map((u) => (
-                                <li key={u} className="text-sm text-gray-300 flex items-center gap-2">
+                                <li key={u.userId} className="text-sm text-gray-300 flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                                    {u}
+                                    {u.username}
+                                    {u.role === 'gm' && (
+                                        <span className="text-xs text-purple-400 font-bold">GM</span>
+                                    )}
                                 </li>
                             ))}
                         </ul>
@@ -294,28 +629,138 @@ export default function GameView({ onLeave }: GameViewProps) {
                             Tokens ({tokens.length})
                         </h2>
                         <ul className="space-y-1">
-                            {tokens.map((t) => (
-                                <li
-                                    key={t.id}
-                                    draggable
-                                    onDragStart={(e) => {
-                                        e.dataTransfer.setData('text/plain', String(t.id));
-                                        e.dataTransfer.effectAllowed = 'move';
-                                    }}
-                                    onClick={() => useStore.getState().selectToken(t.id)}
-                                    className={`text-sm px-2 py-1 rounded select-none transition ${
-                                        t.id === selectedTokenId
-                                            ? 'bg-blue-700 text-white cursor-grabbing'
-                                            : t.visible
-                                                ? 'text-gray-300 hover:bg-gray-700 cursor-grab'
-                                                : 'text-gray-600 hover:bg-gray-700 cursor-grab'
-                                    }`}
-                                >
-                                    {t.visible ? '●' : '○'} {t.characterName ?? `Token #${t.id}`}
-                                </li>
-                            ))}
+                            {tokens.map((t) => {
+                                const canDragToken = currentUser?.role === 'gm' || t.ownerUserId === currentUser?.id;
+                                return (
+                                    <li
+                                        key={t.id}
+                                        draggable={canDragToken}
+                                        onDragStart={canDragToken ? (e) => {
+                                            e.dataTransfer.setData('text/plain', String(t.id));
+                                            e.dataTransfer.effectAllowed = 'move';
+                                        } : undefined}
+                                        onClick={() => useStore.getState().selectToken(t.id)}
+                                        className={`group flex items-center gap-1 text-sm px-2 py-1 rounded select-none transition ${
+                                            t.id === selectedTokenId
+                                                ? 'bg-blue-700 text-white cursor-grabbing'
+                                                : t.visible
+                                                    ? 'text-gray-300 hover:bg-gray-700 ' + (canDragToken ? 'cursor-grab' : 'cursor-default')
+                                                    : 'text-gray-600 hover:bg-gray-700 ' + (canDragToken ? 'cursor-grab' : 'cursor-default')
+                                        }`}
+                                    >
+                                        {currentUser?.role === 'gm' ? (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    getWebSocketService().send('TOKEN_VISIBILITY', { tokenId: t.id });
+                                                }}
+                                                className="shrink-0 text-xs leading-none w-4 text-center"
+                                                title={t.visible ? 'Ocultar token' : 'Mostrar token'}
+                                            >{t.visible ? '●' : '○'}</button>
+                                        ) : (
+                                            <span className="shrink-0 text-xs w-4 text-center">{t.visible ? '●' : '○'}</span>
+                                        )}
+                                        <span className="flex-1 truncate">
+                                            {t.characterName ?? `Token #${t.id}`}
+                                        </span>
+                                        {currentUser?.role === 'gm' && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    getWebSocketService().send('REMOVE_TOKEN', { tokenId: t.id });
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition text-xs leading-none px-0.5"
+                                                title="Eliminar token"
+                                            >✕</button>
+                                        )}
+                                    </li>
+                                );
+                            })}
                         </ul>
                     </section>
+
+                    {currentUser?.role === 'gm' && (
+                        <section className="p-4 border-t border-gray-700">
+                            <div className="flex items-center justify-between mb-3">
+                                <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                                    Personajes
+                                </h2>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => importRef.current?.click()}
+                                        className="text-xs text-gray-400 hover:text-gray-200"
+                                        title="Importar desde Excel"
+                                    >
+                                        ↑ Excel
+                                    </button>
+                                    <button
+                                        onClick={() => setShowCreator(true)}
+                                        className="text-xs text-blue-400 hover:text-blue-200 font-semibold"
+                                        title="Nuevo personaje"
+                                    >
+                                        + Nuevo
+                                    </button>
+                                    <input
+                                        ref={importRef}
+                                        type="file"
+                                        accept=".xlsx,.xlsm,.xls"
+                                        className="hidden"
+                                        onChange={handleImportExcel}
+                                    />
+                                </div>
+                            </div>
+                            {importError && (
+                                <div className="mb-2 text-xs text-red-400 bg-red-900/30 border border-red-800 rounded px-2 py-1">
+                                    {importError}
+                                    <button className="ml-2 underline" onClick={() => setImportError(null)}>×</button>
+                                </div>
+                            )}
+                            {unplacedCharacters.length > 0 && (
+                                <ul className="space-y-1">
+                                    {unplacedCharacters.map((c) => (
+                                        <li key={c.id} className="group flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 transition">
+                                            <button
+                                                className={`flex-1 truncate text-left hover:text-white transition ${viewCharacterId === c.id && rightTab === 'sheet' ? 'text-blue-300' : ''}`}
+                                                onClick={() => { setBrowseCharId(c.id); setRightTab('sheet'); }}
+                                                title="Ver ficha"
+                                            >{c.name}</button>
+                                            <button
+                                                onClick={() => getWebSocketService().send('ADD_TOKEN', { characterId: c.id })}
+                                                className="text-green-500 hover:text-green-300 font-bold text-base leading-none px-1"
+                                                title="Colocar en escena"
+                                            >+</button>
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm(`¿Eliminar a ${c.name}? Esta acción no se puede deshacer.`)) {
+                                                        getWebSocketService().send('DELETE_CHARACTER', { characterId: c.id });
+                                                    }
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-300 text-xs leading-none px-1 transition-opacity"
+                                                title="Eliminar personaje"
+                                            >✕</button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </section>
+                    )}
+                    {currentUser?.role !== 'gm' && ownedCharacters.length > 0 && (
+                        <section className="p-4 border-t border-gray-700">
+                            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                                Mis personajes
+                            </h2>
+                            <ul className="space-y-1">
+                                {ownedCharacters.map((c) => (
+                                    <li key={c.id}>
+                                        <button
+                                            className={`w-full text-left text-sm px-2 py-1 rounded transition ${viewCharacterId === c.id && rightTab === 'sheet' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'}`}
+                                            onClick={() => { setBrowseCharId(c.id); setRightTab('sheet'); }}
+                                        >{c.name}</button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </section>
+                    )}
                     {combat.inCombat && combat.combatState && (
                         <section className="p-4 border-t border-gray-700">
                             <h2 className="text-xs font-bold text-red-400 uppercase tracking-wider mb-3">
@@ -371,6 +816,25 @@ export default function GameView({ onLeave }: GameViewProps) {
                                 getWebSocketService().send('TOKEN_MOVE', { tokenId, x, y })
                             }
                             hpMap={hpMap}
+                            currentUserId={currentUser?.id}
+                            isGM={currentUser?.role === 'gm'}
+                            fogOfWar={fogOfWar}
+                            revealedCells={revealedCells}
+                            fogPaintMode={fogPaintMode}
+                            onFogCellPaint={(cells, revealed) =>
+                                getWebSocketService().send('PAINT_FOG_CELLS', { cells, revealed })
+                            }
+                            portraits={portraits}
+                            rulerMode={rulerMode ?? undefined}
+                            pings={pings}
+                            pingMode={pingMode}
+                            onPing={(x, y) => getWebSocketService().send('PING_MAP', { x, y })}
+                            areas={areas}
+                            areaMode={areaMode ?? undefined}
+                            areaSnap={areaSnap}
+                            areaColor={areaColor}
+                            onAreaCreate={(area) => getWebSocketService().send('ADD_AREA', area)}
+                            onAreaRemove={(areaId) => getWebSocketService().send('REMOVE_AREA', { areaId })}
                         />
                     ) : (
                         <div className="flex items-center justify-center h-full text-center text-gray-600 select-none">
@@ -404,7 +868,17 @@ export default function GameView({ onLeave }: GameViewProps) {
                                     : 'text-gray-500 hover:text-gray-300'
                             }`}
                         >
-                            Personaje{selectedTokenId != null ? ' ●' : ''}
+                            Personaje{viewCharacterId != null ? ' ●' : ''}
+                        </button>
+                        <button
+                            onClick={() => setRightTab('journal')}
+                            className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider transition ${
+                                rightTab === 'journal'
+                                    ? 'text-white border-b-2 border-blue-500'
+                                    : 'text-gray-500 hover:text-gray-300'
+                            }`}
+                        >
+                            Diario
                         </button>
                     </div>
 
@@ -466,26 +940,60 @@ export default function GameView({ onLeave }: GameViewProps) {
 
                     {/* Character Sheet panel */}
                     {rightTab === 'sheet' && (
-                        selectedCharacterId != null ? (
+                        viewCharacterId != null ? (
                             <CharacterSheet
-                                characterId={selectedCharacterId}
+                                characterId={viewCharacterId}
+                                tokenId={
+                                    (selectedTokenId != null && tokens.find(t => t.id === selectedTokenId)?.characterId === viewCharacterId)
+                                        ? selectedTokenId
+                                        : tokens.find(t => t.characterId === viewCharacterId)?.id
+                                }
                                 isGM={currentUser?.role === 'gm'}
+                                canEditHP={currentUser?.role === 'gm' || tokens.find(t => t.characterId === viewCharacterId)?.ownerUserId === currentUser?.id}
                                 onUpdate={(charId, attrsJson) =>
                                     getWebSocketService().send('UPDATE_CHARACTER', {
                                         characterId: charId,
                                         attributesJson: attrsJson,
                                     })
                                 }
+                                onPortraitUpdate={(charId, path) =>
+                                    getWebSocketService().send('UPDATE_PORTRAIT', {
+                                        characterId: charId,
+                                        portraitPath: path,
+                                    })
+                                }
+                                onBiographyUpdate={(charId, bio) =>
+                                    getWebSocketService().send('UPDATE_CHARACTER', {
+                                        characterId: charId,
+                                        biography: bio,
+                                    })
+                                }
                                 onRoll={handleQuickRoll}
+                                connectedUsers={connectedUsers}
+                                onAssignOwner={(userId) => handleAssignOwner(viewCharacterId, userId)}
+                                onAuraUpdate={(tId, auras) =>
+                                    getWebSocketService().send('SET_TOKEN_AURAS', {
+                                        tokenId: tId,
+                                        aurasJson: JSON.stringify(auras),
+                                    })
+                                }
                             />
                         ) : (
                             <div className="flex items-center justify-center flex-1 text-gray-600 text-sm p-4 text-center">
-                                Selecciona un token para ver su ficha
+                                Selecciona un token o personaje para ver su ficha
                             </div>
                         )
                     )}
+
+                    {/* Journal panel */}
+                    {rightTab === 'journal' && (
+                        <Journal isGM={currentUser?.role === 'gm'} />
+                    )}
                 </aside>
             </div>
+            {showCreator && (
+                <CharacterCreator onClose={() => setShowCreator(false)} />
+            )}
             {showCombatSetup && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
                     <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 w-80 shadow-2xl">

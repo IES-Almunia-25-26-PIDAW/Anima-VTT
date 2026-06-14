@@ -6,9 +6,10 @@ import type { Campaign } from '../models';
 
 interface LobbyProps {
     onJoined: () => void;
+    onLogout?: () => void;
 }
 
-export default function Lobby({ onJoined }: LobbyProps) {
+export default function Lobby({ onJoined, onLogout }: LobbyProps) {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
     const [joiningId, setJoiningId] = useState<number | null>(null);
@@ -69,11 +70,21 @@ export default function Lobby({ onJoined }: LobbyProps) {
                         <p className="text-gray-400 mt-1">Selecciona una campaña para unirte</p>
                     </div>
                     {currentUser && (
-                        <div className="text-right">
-                            <p className="text-white font-semibold">{currentUser.username}</p>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${currentUser.role === 'gm' ? 'bg-purple-700 text-purple-100' : 'bg-blue-700 text-blue-100'}`}>
-                                {currentUser.role.toUpperCase()}
-                            </span>
+                        <div className="text-right flex flex-col items-end gap-2">
+                            <div>
+                                <p className="text-white font-semibold">{currentUser.username}</p>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${currentUser.role === 'gm' ? 'bg-purple-700 text-purple-100' : 'bg-blue-700 text-blue-100'}`}>
+                                    {currentUser.role.toUpperCase()}
+                                </span>
+                            </div>
+                            {onLogout && (
+                                <button
+                                    onClick={onLogout}
+                                    className="text-xs text-gray-400 hover:text-white transition"
+                                >
+                                    Cerrar sesión
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>

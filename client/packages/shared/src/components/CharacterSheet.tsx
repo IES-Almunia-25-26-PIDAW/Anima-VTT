@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { API_CONFIG } from '../config';
 import { useStore } from '../store/useStore';
 import type { AnimaAttributes, SkillEntry, KiStatEntry } from '../models/character';
+import type { TokenAura } from '../models/token';
+import type { ConnectedUser } from '../models/user';
+import { exportCharacterToExcel } from '../utils/excelCharacter';
 import {
     statTotal, statMod, totalLevel,
     calcPresencia, calcCombatSkill, calcSecondarySkill,
@@ -11,9 +16,16 @@ import {
 
 interface Props {
     characterId: number;
+    tokenId?: number;
     isGM: boolean;
+    canEditHP?: boolean;
     onUpdate: (characterId: number, attrsJson: string) => void;
+    onPortraitUpdate?: (characterId: number, portraitPath: string) => void;
+    onBiographyUpdate?: (characterId: number, biography: string) => void;
     onRoll?: (formula: string, label: string) => void;
+    connectedUsers?: ConnectedUser[];
+    onAssignOwner?: (userId: number | null) => void;
+    onAuraUpdate?: (tokenId: number, auras: TokenAura[]) => void;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -223,19 +235,30 @@ function CollapsibleSection({ title, children, defaultOpen = true }: {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: Props) {
+export default function CharacterSheet({ characterId, tokenId, isGM, canEditHP, onUpdate, onPortraitUpdate, onBiographyUpdate, onRoll, connectedUsers, onAssignOwner, onAuraUpdate }: Props) {
     const character = useStore(s => s.entities.characters[characterId]);
+    const tokenAuras = useStore(useShallow(s => (tokenId != null ? s.entities.tokens[tokenId]?.auras : undefined) ?? []));
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState<AnimaAttributes>({});
 
+    const [newAuraType, setNewAuraType] = useState<'circle' | 'rect'>('circle');
+    const [newAuraSize, setNewAuraSize] = useState(1);
+    const [newAuraSizeH, setNewAuraSizeH] = useState(1);
+    const [newAuraColor, setNewAuraColor] = useState('#ef4444');
+    const [newAuraLabel, setNewAuraLabel] = useState('');
+
     const [localPV, setLocalPV] = useState(0);
     const [localCan, setLocalCan] = useState(0);
+    const [pvDelta, setPvDelta] = useState('');
+    const [localBiography, setLocalBiography] = useState('');
 
     useEffect(() => {
         if (!character) return;
         const a = character.attributes as AnimaAttributes;
         setLocalPV(a.currentPV ?? a.maxPV ?? 0);
         setLocalCan(a.currentCansancio ?? a.maxCansancio ?? 0);
+        setLocalBiography(character.biography ?? '');
     }, [character]);
 
     if (!character) {
@@ -337,6 +360,28 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
         }
     }
 
+    function applyDamage() {
+        const amount = parseInt(pvDelta, 10);
+        if (!isFinite(amount) || amount <= 0) return;
+        const next = Math.max(0, localPV - amount);
+        setLocalPV(next);
+        setPvDelta('');
+        onUpdate(characterId, JSON.stringify({ ...attrs, currentPV: next }));
+    }
+
+    function applyHeal() {
+        const amount = parseInt(pvDelta, 10);
+        if (!isFinite(amount) || amount <= 0) return;
+        const next = Math.min(maxPV, localPV + amount);
+        setLocalPV(next);
+        setPvDelta('');
+        onUpdate(characterId, JSON.stringify({ ...attrs, currentPV: next }));
+    }
+
+    function handleDeltaKey(e: React.KeyboardEvent<HTMLInputElement>) {
+        if (e.key === 'Enter') applyDamage();
+    }
+
     // ── Draft setters ─────────────────────────────────────────────────────────
 
     function setStatField(stat: string, field: 'base' | 'tmp', val: number) {
@@ -387,6 +432,25 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
         setEditing(false);
     }
 
+    function commitBiography() {
+        if (!onBiographyUpdate) return;
+        if (localBiography !== (character.biography ?? '')) {
+            onBiographyUpdate(characterId, localBiography);
+        }
+    }
+
+    async function handlePortraitUpload(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        if (!file || !onPortraitUpdate) return;
+        e.target.value = '';
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch(`${API_CONFIG.baseURL}/api/uploads`, { method: 'POST', body: form });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.url) onPortraitUpdate(characterId, data.url);
+    }
+
     // ── HP bar ────────────────────────────────────────────────────────────────
 
     const pvPct = maxPV > 0 ? Math.max(0, Math.min(100, (localPV / maxPV) * 100)) : 0;
@@ -400,23 +464,69 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
             <div className="p-3 space-y-0.5">
 
                 {/* Header */}
-                <div className="flex items-start justify-between">
-                    <div>
-                        <div className="text-sm font-bold text-white">{character.name}</div>
-                        <div className="text-gray-400">
-                            {editing
-                                ? <span className="text-yellow-400 text-xs">Editando…</span>
-                                : <>{a.category1 ?? '—'}{lvl > 0 ? ` ${lvl}` : ''}{a.category2 ? ` / ${a.category2} ${a.level2}` : ''}</>
-                            }
-                        </div>
-                        <div className="text-gray-500">{a.race ?? '—'} · {a.gender === 'F' ? 'F' : 'M'}{a.experience !== undefined ? ` · ${a.experience} exp` : ''}</div>
+                <div className="flex items-start gap-3">
+                    {/* Portrait */}
+                    <div className="relative shrink-0">
+                        {character.portraitPath ? (
+                            <img
+                                src={`${API_CONFIG.baseURL}${character.portraitPath}`}
+                                alt={character.name}
+                                className="w-14 h-14 rounded-full object-cover border-2 border-gray-600"
+                            />
+                        ) : (
+                            <div className="w-14 h-14 rounded-full bg-gray-700 border-2 border-gray-600 flex items-center justify-center text-xl font-bold text-gray-300">
+                                {character.name.charAt(0).toUpperCase()}
+                            </div>
+                        )}
+                        {isGM && onPortraitUpdate && (
+                            <>
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="absolute bottom-0 right-0 w-5 h-5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-full flex items-center justify-center text-xs text-gray-300 hover:text-white transition"
+                                    title="Cambiar retrato"
+                                >✎</button>
+                                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePortraitUpload} />
+                            </>
+                        )}
                     </div>
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${
-                        character.type === 'PC' ? 'bg-blue-700 text-blue-100' :
-                        character.type === 'NPC' ? 'bg-gray-600 text-gray-200' :
-                        'bg-red-800 text-red-100'
-                    }`}>{character.type}</span>
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between">
+                            <div className="min-w-0">
+                                <div className="text-sm font-bold text-white truncate">{character.name}</div>
+                                <div className="text-gray-400">
+                                    {editing
+                                        ? <span className="text-yellow-400 text-xs">Editando…</span>
+                                        : <>{a.category1 ?? '—'}{lvl > 0 ? ` ${lvl}` : ''}{a.category2 ? ` / ${a.category2} ${a.level2}` : ''}</>
+                                    }
+                                </div>
+                                <div className="text-gray-500">{a.race ?? '—'} · {a.gender === 'F' ? 'F' : 'M'}{a.experience !== undefined ? ` · ${a.experience} exp` : ''}</div>
+                            </div>
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                                character.type === 'PC' ? 'bg-blue-700 text-blue-100' :
+                                character.type === 'NPC' ? 'bg-gray-600 text-gray-200' :
+                                'bg-red-800 text-red-100'
+                            }`}>{character.type}</span>
+                        </div>
+                    </div>
                 </div>
+
+                {/* GM ownership assignment */}
+                {isGM && connectedUsers && onAssignOwner && (
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-gray-500 shrink-0">Jugador:</span>
+                        <select
+                            value={character.ownerUserId ?? ''}
+                            onChange={(e) => onAssignOwner(e.target.value === '' ? null : Number(e.target.value))}
+                            className="flex-1 bg-gray-700 border border-gray-600 text-xs text-gray-200 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                            <option value="">Sin asignar</option>
+                            {connectedUsers.filter((u) => u.role === 'player').map((u) => (
+                                <option key={u.userId} value={u.userId}>{u.username}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 {/* Global PD bar — only in edit mode */}
                 {editing && (
@@ -440,7 +550,7 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
                             <div className="flex items-center justify-between mb-0.5">
                                 <span className="text-gray-400">PV</span>
                                 <div className="flex items-center gap-1">
-                                    {isGM ? (
+                                    {(isGM || canEditHP) ? (
                                         <>
                                             <input type="number" value={localPV}
                                                 onChange={e => setLocalPV(Number(e.target.value))}
@@ -462,6 +572,33 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
                             <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
                                 <div className={`h-full ${pvColor} rounded-full transition-all`} style={{ width: `${pvPct}%` }} />
                             </div>
+                            {(isGM || canEditHP) && (
+                                <div className="flex items-center gap-1 mt-1.5">
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        placeholder="Δ"
+                                        value={pvDelta}
+                                        onChange={e => setPvDelta(e.target.value)}
+                                        onKeyDown={handleDeltaKey}
+                                        className="w-14 text-center bg-gray-700 border border-gray-600 rounded py-0.5 text-xs placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                                    />
+                                    <button
+                                        onClick={applyDamage}
+                                        disabled={!pvDelta || parseInt(pvDelta, 10) <= 0}
+                                        className="flex-1 text-xs py-0.5 px-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 text-red-100 transition"
+                                    >
+                                        Daño
+                                    </button>
+                                    <button
+                                        onClick={applyHeal}
+                                        disabled={!pvDelta || parseInt(pvDelta, 10) <= 0}
+                                        className="flex-1 text-xs py-0.5 px-1 rounded bg-green-800 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500 text-green-100 transition"
+                                    >
+                                        Curar
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         <div>
@@ -896,6 +1033,76 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
                     })()}
                 </CollapsibleSection>
 
+                {/* Auras (GM only, only when a token is selected) */}
+                {isGM && tokenId != null && onAuraUpdate && (
+                    <CollapsibleSection title="Auras" defaultOpen={false}>
+                        {tokenAuras.length > 0 ? (
+                            <div className="space-y-0.5 mb-2">
+                                {tokenAuras.map(aura => (
+                                    <div key={aura.id} className="flex items-center gap-1.5">
+                                        <span className="w-3 h-3 rounded-sm shrink-0 border border-gray-600" style={{ background: aura.color }} />
+                                        <span className="text-gray-400 text-xs shrink-0">{aura.type === 'circle' ? '○' : '□'} {aura.size}{aura.sizeH && aura.sizeH !== aura.size ? `×${aura.sizeH}` : ''} cel</span>
+                                        {aura.label && <span className="text-gray-500 flex-1 truncate text-xs">{aura.label}</span>}
+                                        <button
+                                            onClick={() => onAuraUpdate(tokenId, tokenAuras.filter(a => a.id !== aura.id))}
+                                            className="text-gray-600 hover:text-red-400 text-xs ml-auto transition leading-none"
+                                        >✕</button>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-gray-600 text-xs italic mb-2">Sin auras.</p>
+                        )}
+                        <div className="space-y-1 pt-1 border-t border-gray-700/50">
+                            <div className="flex gap-1">
+                                <select value={newAuraType} onChange={e => setNewAuraType(e.target.value as 'circle' | 'rect')}
+                                    className="flex-1 bg-gray-700 border border-gray-600 rounded py-0 text-xs text-gray-200 focus:outline-none">
+                                    <option value="circle">○ Círculo</option>
+                                    <option value="rect">□ Rectángulo</option>
+                                </select>
+                                <input type="color" value={newAuraColor} onChange={e => setNewAuraColor(e.target.value)}
+                                    className="w-7 h-5 rounded cursor-pointer border border-gray-600 p-0 bg-gray-700" />
+                            </div>
+                            <div className="flex gap-1 items-center">
+                                <span className="text-gray-500 text-xs shrink-0">{newAuraType === 'circle' ? 'Radio' : 'Ancho'}</span>
+                                <input type="number" min={0.5} step={0.5} value={newAuraSize}
+                                    onChange={e => setNewAuraSize(Number(e.target.value))}
+                                    className="w-12 text-center bg-gray-700 border border-gray-600 rounded py-0 text-xs" />
+                                {newAuraType === 'rect' && (
+                                    <>
+                                        <span className="text-gray-500 text-xs shrink-0">Alto</span>
+                                        <input type="number" min={0.5} step={0.5} value={newAuraSizeH}
+                                            onChange={e => setNewAuraSizeH(Number(e.target.value))}
+                                            className="w-12 text-center bg-gray-700 border border-gray-600 rounded py-0 text-xs" />
+                                    </>
+                                )}
+                                <span className="text-gray-500 text-xs shrink-0">cel</span>
+                            </div>
+                            <div className="flex gap-1">
+                                <input type="text" placeholder="Etiqueta (opcional)" value={newAuraLabel}
+                                    onChange={e => setNewAuraLabel(e.target.value)}
+                                    className="flex-1 bg-gray-700 border border-gray-600 rounded py-0 px-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none" />
+                                <button
+                                    onClick={() => {
+                                        if (newAuraSize <= 0) return;
+                                        const aura: TokenAura = {
+                                            id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                                            type: newAuraType,
+                                            size: newAuraSize,
+                                            ...(newAuraType === 'rect' && newAuraSizeH !== newAuraSize ? { sizeH: newAuraSizeH } : {}),
+                                            color: newAuraColor,
+                                            ...(newAuraLabel.trim() ? { label: newAuraLabel.trim() } : {}),
+                                        };
+                                        onAuraUpdate(tokenId, [...tokenAuras, aura]);
+                                        setNewAuraLabel('');
+                                    }}
+                                    className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-2 py-0.5 rounded transition"
+                                >+ Añadir</button>
+                            </div>
+                        </div>
+                    </CollapsibleSection>
+                )}
+
                 {/* Notes */}
                 <CollapsibleSection title="Notas" defaultOpen={false}>
                     {editing ? (
@@ -912,6 +1119,26 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
                         </p>
                     )}
                 </CollapsibleSection>
+
+                {/* Biografía */}
+                {(character.biography || isGM) && (
+                    <CollapsibleSection title="Biografía" defaultOpen={false}>
+                        {isGM && onBiographyUpdate ? (
+                            <textarea
+                                value={localBiography}
+                                onChange={e => setLocalBiography(e.target.value)}
+                                onBlur={commitBiography}
+                                rows={5}
+                                className="w-full bg-gray-700 border border-gray-600 rounded p-1.5 text-xs text-gray-300 resize-y focus:outline-none focus:border-blue-500"
+                                placeholder="Historia, descripción, notas del personaje…"
+                            />
+                        ) : (
+                            <p className="text-gray-400 whitespace-pre-wrap" style={{ fontSize: 11 }}>
+                                {character.biography || <span className="italic text-gray-600">Sin biografía.</span>}
+                            </p>
+                        )}
+                    </CollapsibleSection>
+                )}
 
                 {/* Edit controls */}
                 {isGM && (
@@ -934,12 +1161,26 @@ export default function CharacterSheet({ characterId, isGM, onUpdate, onRoll }: 
                                 </button>
                             </>
                         ) : (
-                            <button
-                                onClick={handleEdit}
-                                className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 py-1.5 rounded text-xs transition"
-                            >
-                                Editar ficha
-                            </button>
+                            <>
+                                <button
+                                    onClick={handleEdit}
+                                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 py-1.5 rounded text-xs transition"
+                                >
+                                    Editar ficha
+                                </button>
+                                <button
+                                    onClick={() => exportCharacterToExcel({
+                                        name: character.name,
+                                        type: character.type,
+                                        biography: character.biography,
+                                        attributes: attrs,
+                                    })}
+                                    className="bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-gray-200 px-2 py-1.5 rounded text-xs transition"
+                                    title="Exportar a Excel"
+                                >
+                                    ↓ Excel
+                                </button>
+                            </>
                         )}
                     </div>
                 )}

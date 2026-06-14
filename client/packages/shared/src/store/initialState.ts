@@ -31,4 +31,8 @@ export const initialState: NormalizedState = {
 
     connectedUsers: [],
     fogOfWar: false,
+    revealedCells: [],
+    journal: { folders: {}, entries: {} },
+    pings: [],
+    areas: [],
 };

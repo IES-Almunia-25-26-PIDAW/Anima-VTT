@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getWebSocketService } from '../websocket';
+import { API_CONFIG } from '../config';
 import type { LoginSuccess } from '../websocket';
 
 interface LoginProps {
@@ -15,8 +16,7 @@ export default function Login({ onLoginSuccess, onGoToSignIn }: LoginProps) {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
 
     useEffect(() => {
-        const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:1000/game';
-        const ws = getWebSocketService(wsUrl);
+        const ws = getWebSocketService(API_CONFIG.wsURL);
 
         ws.connect()
             .then(() => {
@@ -142,7 +142,7 @@ export default function Login({ onLoginSuccess, onGoToSignIn }: LoginProps) {
 
                 <div className="mt-6 pt-6 border-t border-gray-700">
                     <p className="text-center text-gray-400 text-sm">
-                        Conectado a: <span className="text-blue-400 font-mono">{import.meta.env.VITE_WS_URL || 'ws://localhost:1000/game'}</span>
+                        Conectado a: <span className="text-blue-400 font-mono">{API_CONFIG.wsURL}</span>
                     </p>
                 </div>
             </div>

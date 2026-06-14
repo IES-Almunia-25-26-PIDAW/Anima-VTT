@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { NormalizedState, CombatState } from './state';
+import { NormalizedState, CombatState, MapPing, MapArea } from './state';
 import { initialState } from './initialState';
-import type { Token, Scene, Character, CharacterType, ChatMessage, User } from '../models';
+import type { Token, Scene, Character, CharacterType, ChatMessage, User, ConnectedUser, JournalFolder, JournalEntry, TokenAura } from '../models';
 import type { WebSocketService } from '../websocket';
 import type { ID } from './types';
 
@@ -24,6 +24,7 @@ type Actions = {
 
     // Characters
     upsertCharacter: (character: Character) => void;
+    removeCharacter: (characterId: number) => void;
 
     // Chat
     addChatMessage: (message: ChatMessage) => void;
@@ -32,7 +33,29 @@ type Actions = {
     setCombat: (inCombat: boolean, combatState: CombatState | null) => void;
 
     // Connected users
-    setConnectedUsers: (users: string[]) => void;
+    setConnectedUsers: (users: ConnectedUser[]) => void;
+
+    // Fog of war
+    setFogOfWar: (enabled: boolean) => void;
+    setRevealedCells: (cells: string[]) => void;
+    updateRevealedCells: (cells: string[], revealed: boolean) => void;
+
+    // Pings
+    addPing: (ping: Omit<MapPing, 'id' | 'startMs'>) => void;
+
+    // Token auras
+    setTokenAuras: (tokenId: number, auras: TokenAura[]) => void;
+
+    // Areas
+    addArea: (area: MapArea) => void;
+    removeArea: (areaId: string) => void;
+    clearAreas: () => void;
+
+    // Journal
+    upsertJournalFolder: (folder: JournalFolder) => void;
+    removeJournalFolder: (folderId: number) => void;
+    upsertJournalEntry: (entry: JournalEntry) => void;
+    removeJournalEntry: (entryId: number) => void;
 
     // Batch updates from server payloads
     applySessionState: (payload: any) => void;
@@ -55,7 +78,9 @@ function normalizeToken(t: any): Token {
         visible: t.isVisible ?? true,
         locked: t.isLocked ?? false,
         hpOverride: t.hpOverride ?? undefined,
+        ownerUserId: t.ownerUserId ?? undefined,
         statusEffects: t.statusEffectsJson ? JSON.parse(t.statusEffectsJson) : [],
+        auras: t.aurasJson ? JSON.parse(t.aurasJson) : [],
     };
 }
 
@@ -68,7 +93,8 @@ function normalizeCharacter(c: any, campaignId: ID): Character {
         type: c.type as CharacterType,
         attributes: c.attributesJson ? JSON.parse(c.attributesJson) : {},
         biography: c.biography ?? undefined,
-        portraitPath: undefined,
+        portraitPath: c.portraitPath ?? undefined,
+        ownerUserId: c.ownerUserId ?? undefined,
         tokenIds: [],
         itemIds: [],
     };
@@ -170,6 +196,24 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
             entities: { ...s.entities, characters: { ...s.entities.characters, [character.id]: character } },
         })),
 
+    removeCharacter: (characterId) =>
+        set((s) => {
+            const characters = { ...s.entities.characters };
+            delete characters[characterId];
+            // Also remove any tokens that belonged to this character
+            const tokens = { ...s.entities.tokens };
+            for (const id of Object.keys(tokens)) {
+                if (tokens[Number(id)].characterId === characterId) delete tokens[Number(id)];
+            }
+            return {
+                entities: { ...s.entities, characters, tokens },
+                ui: {
+                    ...s.ui,
+                    selectedTokenId: tokens[s.ui.selectedTokenId as number] == null ? undefined : s.ui.selectedTokenId,
+                },
+            };
+        }),
+
     addChatMessage: (message) =>
         set((s) => ({
             entities: { ...s.entities, chatMessages: { ...s.entities.chatMessages, [message.id]: message } },
@@ -181,12 +225,84 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
     setConnectedUsers: (users) =>
         set(() => ({ connectedUsers: users })),
 
+    setFogOfWar: (enabled) =>
+        set(() => ({ fogOfWar: enabled })),
+
+    setRevealedCells: (cells) =>
+        set(() => ({ revealedCells: cells })),
+
+    updateRevealedCells: (cells, revealed) =>
+        set((s) => {
+            const existing = new Set(s.revealedCells);
+            if (revealed) {
+                cells.forEach((c) => existing.add(c));
+            } else {
+                cells.forEach((c) => existing.delete(c));
+            }
+            return { revealedCells: Array.from(existing) };
+        }),
+
+    addPing: ({ x, y, username }) => {
+        const id = `${Date.now()}-${Math.random()}`;
+        const startMs = Date.now();
+        set((s) => ({ pings: [...s.pings, { id, x, y, username, startMs }] }));
+        setTimeout(() => {
+            set((s) => ({ pings: s.pings.filter((p) => p.id !== id) }));
+        }, 3500);
+    },
+
+    setTokenAuras: (tokenId, auras) =>
+        set((s) => {
+            const token = s.entities.tokens[tokenId];
+            if (!token) return {};
+            return {
+                entities: {
+                    ...s.entities,
+                    tokens: { ...s.entities.tokens, [tokenId]: { ...token, auras } },
+                },
+            };
+        }),
+
+    addArea: (area) => set((s) => ({ areas: [...s.areas, area] })),
+    removeArea: (areaId) => set((s) => ({ areas: s.areas.filter((a) => a.id !== areaId) })),
+    clearAreas: () => set(() => ({ areas: [] })),
+
+    upsertJournalFolder: (folder) =>
+        set((s) => ({ journal: { ...s.journal, folders: { ...s.journal.folders, [folder.id]: folder } } })),
+
+    removeJournalFolder: (folderId) =>
+        set((s) => {
+            const folders = { ...s.journal.folders };
+            delete folders[folderId];
+            // unlink entries that referenced this folder
+            const entries: Record<number, JournalEntry> = {};
+            for (const [k, e] of Object.entries(s.journal.entries)) {
+                entries[Number(k)] = e.folderId === folderId ? { ...e, folderId: undefined } : e;
+            }
+            return { journal: { folders, entries } };
+        }),
+
+    upsertJournalEntry: (entry) =>
+        set((s) => ({ journal: { ...s.journal, entries: { ...s.journal.entries, [entry.id]: entry } } })),
+
+    removeJournalEntry: (entryId) =>
+        set((s) => {
+            const entries = { ...s.journal.entries };
+            delete entries[entryId];
+            return { journal: { ...s.journal, entries } };
+        }),
+
     applySessionState: (payload) => {
-        const { campaignId, activeScene, tokens, characters, connectedUsers, inCombat, combatState, fogOfWar } = payload;
+        const { campaignId, activeScene, tokens, characters, connectedUsers, inCombat, combatState, fogOfWar, revealedCells, allScenes, journalFolders, journalEntries } = payload;
 
         const tokensRecord = buildTokensRecord(tokens ?? []);
 
         const scenesRecord: Record<ID, Scene> = {};
+        // Populate all scenes (no token IDs for inactive ones)
+        for (const s of (allScenes ?? [])) {
+            scenesRecord[s.sceneId] = normalizeScene(s, []);
+        }
+        // Active scene overwrites with correct token IDs
         if (activeScene) {
             const scene = normalizeScene(activeScene, Object.keys(tokensRecord).map(Number));
             scenesRecord[scene.id] = scene;
@@ -213,13 +329,30 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
             combat: { inCombat: inCombat ?? false, combatState: combatState ?? null },
             connectedUsers: connectedUsers ?? [],
             fogOfWar: fogOfWar ?? false,
+            revealedCells: revealedCells ?? [],
+            areas: payload.areas ?? [],
+            journal: {
+                folders: Object.fromEntries((journalFolders ?? []).map((f: any) => [f.folderId, { id: f.folderId, name: f.name }])),
+                entries: Object.fromEntries((journalEntries ?? []).map((e: any) => [e.entryId, { id: e.entryId, folderId: e.folderId ?? undefined, title: e.title, content: e.content, visibility: e.visibility }])),
+            },
         }));
     },
 
     applySceneChanged: (payload) => {
-        const { activeScene, tokens } = payload;
+        const { activeScene, tokens, fogOfWar, revealedCells } = payload;
+        const currentSceneId = get().ui.activeSceneId;
+        const newSceneId = activeScene?.sceneId;
+        const isSceneSwitch = newSceneId !== currentSceneId;
 
-        const tokensRecord = buildTokensRecord(tokens ?? []);
+        // Only replace the token set when switching to a different scene.
+        // Background-image updates broadcast SCENE_CHANGED on the same scene —
+        // using the server's token list there risks getting an empty array if
+        // the server cleared tokens before the fix, and discards local position
+        // updates that arrived after the snapshot was taken.
+        const tokensRecord = isSceneSwitch
+            ? buildTokensRecord(tokens ?? [])
+            : get().entities.tokens;
+
         const scene = normalizeScene(activeScene, Object.keys(tokensRecord).map(Number));
 
         set((s) => ({
@@ -231,8 +364,12 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
             ui: {
                 ...s.ui,
                 activeSceneId: scene.id,
-                selectedTokenId: undefined,
+                selectedTokenId: isSceneSwitch ? undefined : s.ui.selectedTokenId,
             },
+            ...(isSceneSwitch && fogOfWar !== undefined && {
+                fogOfWar: fogOfWar,
+                revealedCells: revealedCells ?? [],
+            }),
         }));
     },
 
@@ -303,17 +440,134 @@ export const useStore = create<NormalizedState & Actions>((set, get) => ({
         });
 
         ws.on('USER_LEFT', (payload) => {
-            const updated = get().connectedUsers.filter((u) => u !== payload.username);
+            const updated = get().connectedUsers.filter((u) => u.username !== payload.username);
             get().setConnectedUsers(updated);
+        });
+
+        ws.on('CHARACTER_OWNERSHIP_CHANGED', (payload) => {
+            const { characterId, ownerUserId } = payload;
+            set((s) => {
+                const char = s.entities.characters[characterId];
+                if (!char) return {};
+                const updatedChar = { ...char, ownerUserId: ownerUserId ?? undefined };
+                const updatedTokens = { ...s.entities.tokens };
+                for (const id of Object.keys(updatedTokens)) {
+                    const t = updatedTokens[Number(id)];
+                    if (t.characterId === characterId) {
+                        updatedTokens[Number(id)] = { ...t, ownerUserId: ownerUserId ?? undefined };
+                    }
+                }
+                return {
+                    entities: {
+                        ...s.entities,
+                        characters: { ...s.entities.characters, [characterId]: updatedChar },
+                        tokens: updatedTokens,
+                    },
+                };
+            });
+        });
+
+        ws.on('TOKEN_ADDED', (payload) => {
+            const token = normalizeToken(payload.token);
+            set((s) => ({
+                entities: {
+                    ...s.entities,
+                    tokens: { ...s.entities.tokens, [token.id]: token },
+                },
+            }));
+        });
+
+        ws.on('TOKEN_REMOVED', (payload) => {
+            const { tokenId } = payload;
+            set((s) => {
+                const tokens = { ...s.entities.tokens };
+                delete tokens[tokenId];
+                return {
+                    entities: { ...s.entities, tokens },
+                    ui: {
+                        ...s.ui,
+                        selectedTokenId: s.ui.selectedTokenId === tokenId ? undefined : s.ui.selectedTokenId,
+                    },
+                };
+            });
+        });
+
+        ws.on('SCENE_CREATED', (payload) => {
+            const scene = normalizeScene(payload.scene, []);
+            set((s) => ({
+                entities: {
+                    ...s.entities,
+                    scenes: { ...s.entities.scenes, [scene.id]: scene },
+                },
+            }));
+        });
+
+        ws.on('FOG_OF_WAR_CHANGED', (payload) => {
+            get().setFogOfWar(payload.enabled);
+        });
+
+        ws.on('FOG_CELLS_CHANGED', (payload) => {
+            get().updateRevealedCells(payload.cells, payload.revealed);
         });
 
         ws.on('CHARACTER_UPDATED', (payload) => {
             const existing = get().entities.characters[payload.characterId];
             if (!existing) return;
-            get().upsertCharacter({
-                ...existing,
-                attributes: JSON.parse(payload.attributesJson),
-            });
+            const update: Partial<typeof existing> = {};
+            if (payload.attributesJson != null) update.attributes = JSON.parse(payload.attributesJson);
+            if ('portraitPath' in payload) update.portraitPath = payload.portraitPath ?? undefined;
+            if ('biography' in payload) update.biography = payload.biography ?? undefined;
+            get().upsertCharacter({ ...existing, ...update });
+        });
+
+        ws.on('JOURNAL_FOLDER_CREATED', (payload) => {
+            const { folder } = payload;
+            get().upsertJournalFolder({ id: folder.folderId, name: folder.name });
+        });
+
+        ws.on('JOURNAL_FOLDER_DELETED', (payload) => {
+            get().removeJournalFolder(payload.folderId);
+        });
+
+        ws.on('JOURNAL_ENTRY_CREATED', (payload) => {
+            const { entry } = payload;
+            get().upsertJournalEntry({ id: entry.entryId, folderId: entry.folderId ?? undefined, title: entry.title, content: entry.content, visibility: entry.visibility });
+        });
+
+        ws.on('JOURNAL_ENTRY_UPDATED', (payload) => {
+            const { entry } = payload;
+            get().upsertJournalEntry({ id: entry.entryId, folderId: entry.folderId ?? undefined, title: entry.title, content: entry.content, visibility: entry.visibility });
+        });
+
+        ws.on('JOURNAL_ENTRY_DELETED', (payload) => {
+            get().removeJournalEntry(payload.entryId);
+        });
+
+        ws.on('MAP_PING', (payload) => {
+            get().addPing({ x: payload.x, y: payload.y, username: payload.username });
+        });
+
+        ws.on('TOKEN_AURAS_CHANGED', (payload) => {
+            const auras: TokenAura[] = payload.aurasJson ? JSON.parse(payload.aurasJson) : [];
+            get().setTokenAuras(payload.tokenId, auras);
+        });
+
+        ws.on('AREA_ADDED', (payload) => {
+            get().addArea(payload.area);
+        });
+
+        ws.on('AREA_REMOVED', (payload) => {
+            get().removeArea(payload.areaId);
+        });
+
+        ws.on('CHARACTER_CREATED', (payload) => {
+            const campaignId = get().ui.activeCampaignId;
+            if (campaignId == null) return;
+            get().upsertCharacter(normalizeCharacter(payload.character, campaignId));
+        });
+
+        ws.on('CHARACTER_DELETED', (payload) => {
+            get().removeCharacter(payload.characterId);
         });
     },
 }));
