@@ -104,6 +104,8 @@ export interface Character {
 
     portraitPath?: string;
 
+    ownerUserId?: number;
+
     tokenIds: number[];
 
     itemIds: number[];
