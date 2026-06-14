@@ -13,13 +13,13 @@ function Info($msg) { Write-Host "  [..] $msg" -ForegroundColor Yellow }
 
 Clear-Host
 Write-Host "================================================" -ForegroundColor DarkCyan
-Write-Host "   VTT — Anima Beyond Fantasy  |  GM Launcher  " -ForegroundColor Cyan
+Write-Host "   VTT -- Anima Beyond Fantasy  |  GM Launcher  " -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor DarkCyan
 
-# ── 0. Check Tailscale ────────────────────────────────────────────────────────
+# -- 0. Check Tailscale ----------------------------------------------------------
 if (-not (Get-Command tailscale -ErrorAction SilentlyContinue)) {
     Err "Tailscale is not installed."
-    Err "Run setup-tailscale.ps1 first (right-click → Run as Administrator)."
+    Err "Run setup-tailscale.ps1 first (right-click -> Run as Administrator)."
     Read-Host "  Press Enter to exit"; exit 1
 }
 $tsState = tailscale status --json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
@@ -32,7 +32,7 @@ $dnsName    = $tsState.Self.DNSName.TrimEnd('.')
 $sessionUrl = "https://$dnsName"
 Ok "Tailscale: $dnsName"
 
-# ── Detect runtime: Docker (preferred) or Maven fallback ──────────────────────
+# -- Detect runtime: Docker (preferred) or Maven fallback ------------------------
 $useDocker = $false
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     docker compose version 2>$null | Out-Null
@@ -41,7 +41,7 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
 
 $serverProcess = $null   # holds the Maven powershell PID when not using Docker
 
-# ── 1. Build + Start server ───────────────────────────────────────────────────
+# -- 1. Build + Start server -----------------------------------------------------
 if ($useDocker) {
     Header "1/2  Building and starting via Docker..."
     Info "Running: docker compose up --build -d"
@@ -52,7 +52,7 @@ if ($useDocker) {
     } finally { Pop-Location }
     Ok "Container started."
 } else {
-    Info "Docker not found — using Maven directly."
+    Info "Docker not found -- using Maven directly."
 
     Header "1/3  Building frontend..."
     Push-Location "$Root\client"
@@ -71,7 +71,7 @@ if ($useDocker) {
     Info "Server window opened (PID $($serverProcess.Id))."
 }
 
-# ── Wait for server to answer ─────────────────────────────────────────────────
+# -- Wait for server to answer ---------------------------------------------------
 $step = if ($useDocker) { "2/2" } else { "3/3" }
 Header "$step  Waiting for server..."
 $ready = $false
@@ -91,7 +91,7 @@ if (-not $ready) {
 }
 Ok "Server ready at http://localhost:1000"
 
-# ── Open Tailscale Funnel ────────────────────────────────────────────────────
+# -- Open Tailscale Funnel -------------------------------------------------------
 Header "Opening Tailscale Funnel..."
 tailscale funnel 1000
 if ($LASTEXITCODE -ne 0) {
@@ -105,7 +105,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Ok "Funnel active."
 
-# ── Display URL ───────────────────────────────────────────────────────────────
+# -- Display URL -----------------------------------------------------------------
 $bar = "=" * ($sessionUrl.Length + 8)
 Write-Host ""
 Write-Host "  $bar" -ForegroundColor Cyan
@@ -113,13 +113,13 @@ Write-Host "   Share this URL with your players:" -ForegroundColor White
 Write-Host ""
 Write-Host "     $sessionUrl" -ForegroundColor Green
 Write-Host ""
-Write-Host "   Stable URL — same every session, no warning page." -ForegroundColor Gray
+Write-Host "   Stable URL - same every session, no warning page." -ForegroundColor Gray
 Write-Host "  $bar" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop everything." -ForegroundColor DarkGray
 Write-Host ""
 
-# ── Keep alive until Ctrl+C ───────────────────────────────────────────────────
+# -- Keep alive until Ctrl+C -----------------------------------------------------
 try {
     while ($true) { Start-Sleep -Seconds 10 }
 } finally {

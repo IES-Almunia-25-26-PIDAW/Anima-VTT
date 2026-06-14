@@ -9,10 +9,10 @@ function Hdr($m)  { Write-Host ""; Write-Host "  $m" -ForegroundColor Cyan; Writ
 
 Clear-Host
 Write-Host "================================================" -ForegroundColor DarkCyan
-Write-Host "   VTT — Tailscale One-Time Setup              " -ForegroundColor Cyan
+Write-Host "   VTT -- Tailscale One-Time Setup              " -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor DarkCyan
 
-# ── 1. Install Tailscale ──────────────────────────────────────────────────────
+# -- 1. Install Tailscale --------------------------------------------------------
 Hdr "1/3  Installing Tailscale..."
 
 if (Get-Command tailscale -ErrorAction SilentlyContinue) {
@@ -25,7 +25,7 @@ if (Get-Command tailscale -ErrorAction SilentlyContinue) {
             --accept-package-agreements --accept-source-agreements
         if ($LASTEXITCODE -ne 0) { throw "winget install failed." }
     } else {
-        Info "winget not available — downloading MSI installer..."
+        Info "winget not available -- downloading MSI installer..."
         $msi = "$env:TEMP\tailscale-setup.exe"
         Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.exe" `
             -OutFile $msi -UseBasicParsing
@@ -44,7 +44,7 @@ if (Get-Command tailscale -ErrorAction SilentlyContinue) {
     Ok "Tailscale installed."
 }
 
-# ── 2. Log in ─────────────────────────────────────────────────────────────────
+# -- 2. Log in -------------------------------------------------------------------
 Hdr "2/3  Logging in to Tailscale..."
 
 $state = (tailscale status --json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue)
@@ -69,11 +69,19 @@ if ($state -and $state.BackendState -eq "Running") {
     Ok "Logged in as: $($state.Self.DNSName.TrimEnd('.'))"
 }
 
-# ── 3. Enable HTTPS certificates + Funnel ────────────────────────────────────
+# -- 3. Enable HTTPS certificates + Funnel ---------------------------------------
 Hdr "3/3  Enabling Funnel..."
 
-Write-Host "  Tailscale Funnel requires two settings to be enabled" -ForegroundColor White
-Write-Host "  in your Tailscale admin console (one-time, ~30 seconds):" -ForegroundColor White
+Write-Host "  IMPORTANT: Tailscale requires at least 2 devices on your account" -ForegroundColor Yellow
+Write-Host "  before it unlocks the admin console." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  If the admin links below redirect you to an onboarding page:" -ForegroundColor White
+Write-Host "    -> Install Tailscale on your phone (iOS or Android)" -ForegroundColor Cyan
+Write-Host "    -> Log in with the SAME account as this PC" -ForegroundColor Cyan
+Write-Host "    -> Then come back here and press Enter to continue" -ForegroundColor Cyan
+Write-Host "    (You can uninstall it from your phone after this setup)" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  Once the admin console is unlocked, do these two steps:" -ForegroundColor White
 Write-Host ""
 Write-Host "    1. Open: https://login.tailscale.com/admin/dns" -ForegroundColor Yellow
 Write-Host "       Enable 'HTTPS Certificates'" -ForegroundColor Yellow
