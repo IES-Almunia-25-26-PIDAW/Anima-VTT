@@ -32,6 +32,12 @@ public class Scene {
     @Column(name = "is_active")
     private Boolean isActive = false;
 
+    @Column(name = "fog_of_war_enabled")
+    private Boolean fogOfWarEnabled = false;
+
+    @Column(name = "revealed_cells_json", columnDefinition = "TEXT")
+    private String revealedCellsJson;
+
     @OneToMany(mappedBy = "scene", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Token> tokens;
 }

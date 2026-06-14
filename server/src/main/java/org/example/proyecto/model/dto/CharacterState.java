@@ -13,4 +13,6 @@ public class CharacterState {
     private String type;
     private String attributesJson;
     private String biography;
+    private String portraitPath;
+    private Long ownerUserId;
 }

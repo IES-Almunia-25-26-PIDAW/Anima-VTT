@@ -1,0 +1,25 @@
+# Version control
+.git
+.gitignore
+
+# IDE
+**/.idea/
+**/*.iml
+
+# Node artefacts
+**/node_modules/
+client/packages/*/dist/
+client/packages/desktop/src-tauri/target/
+
+# Java build artefacts
+Server/target/
+AntiguoFront/
+
+# Runtime data (kept in Docker volumes, not baked into the image)
+Server/database.db
+Server/uploads/
+
+# Windows-only launcher scripts (not needed inside the image)
+start-gm.bat
+start-gm.ps1
+setup-tailscale.ps1

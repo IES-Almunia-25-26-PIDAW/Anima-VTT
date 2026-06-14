@@ -5,6 +5,7 @@ import org.example.proyecto.model.dto.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
 import java.util.stream.Collectors;
 
 public class GameSession {
@@ -28,6 +29,12 @@ public class GameSession {
     // Configuración temporal
     @Getter
     private boolean fogOfWarEnabled = false;
+
+    // Revealed fog cells — stored as "cx,cy" grid-coordinate strings
+    private final Set<String> revealedCells = ConcurrentHashMap.newKeySet();
+
+    // Map areas — shared overlays (circles, rectangles) placed by users
+    private final List<Map<String, Object>> areas = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public GameSession(Long campaignId) {
         this.campaignId = campaignId;
@@ -64,6 +71,18 @@ public class GameSession {
                 .collect(Collectors.toList());
     }
 
+    public List<Map<String, Object>> getConnectedUsersInfo() {
+        return connectedUsers.values().stream()
+                .map(u -> {
+                    Map<String, Object> info = new java.util.HashMap<>();
+                    info.put("userId", u.getUserId());
+                    info.put("username", u.getUsername());
+                    info.put("role", u.getRole());
+                    return info;
+                })
+                .collect(Collectors.toList());
+    }
+
     public boolean hasGMConnected() {
         return connectedUsers.values().stream()
                 .anyMatch(UserSession::isGM);
@@ -80,6 +99,15 @@ public class GameSession {
     public void setActiveScene(SceneState scene) {
         this.activeScene = scene;
         tokens.clear();
+    }
+
+    public void updateActiveSceneBackground(String imagePath) {
+        if (activeScene == null) return;
+        SceneState c = activeScene;
+        activeScene = new SceneState(
+                c.getSceneId(), c.getCampaignId(), c.getName(),
+                imagePath, c.getGridSize(), c.getWidth(), c.getHeight(), c.getIsActive()
+        );
     }
 
     public boolean hasActiveScene() {
@@ -114,6 +142,51 @@ public class GameSession {
 
     public void clearTokens() {
         tokens.clear();
+    }
+
+    // -------------------------------
+    // Gestión de personajes
+    // -------------------------------
+
+    private final Map<Long, CharacterState> characters = new ConcurrentHashMap<>();
+
+    public void addOrUpdateCharacter(CharacterState cs) {
+        characters.put(cs.getCharacterId(), cs);
+    }
+
+    public Collection<CharacterState> getAllCharacters() {
+        return characters.values();
+    }
+
+    public CharacterState getCharacter(Long characterId) {
+        return characters.get(characterId);
+    }
+
+    public void updateCharacterAttributes(Long characterId, String attributesJson) {
+        CharacterState cs = characters.get(characterId);
+        if (cs != null) cs.setAttributesJson(attributesJson);
+    }
+
+    public void updateCharacterPortrait(Long characterId, String portraitPath) {
+        CharacterState cs = characters.get(characterId);
+        if (cs != null) cs.setPortraitPath(portraitPath);
+    }
+
+    public void updateCharacterBiography(Long characterId, String biography) {
+        CharacterState cs = characters.get(characterId);
+        if (cs != null) cs.setBiography(biography);
+    }
+
+    public void removeCharacter(Long characterId) {
+        characters.remove(characterId);
+    }
+
+    public void assignCharacterOwner(Long characterId, Long ownerUserId) {
+        CharacterState cs = characters.get(characterId);
+        if (cs != null) cs.setOwnerUserId(ownerUserId);
+        tokens.values().stream()
+                .filter(t -> characterId.equals(t.getCharacterId()))
+                .forEach(t -> t.setOwnerUserId(ownerUserId));
     }
 
     // -------------------------------
@@ -168,6 +241,13 @@ public class GameSession {
         }
     }
 
+    public void reorderCombat(List<Long> tokenIds) {
+        combatState.setTurnOrder(new ArrayList<>(tokenIds));
+        if (!tokenIds.isEmpty()) {
+            combatState.setCurrentTurnTokenId(tokenIds.get(0));
+        }
+    }
+
     public void endCombat() {
         combatState = new CombatState();
     }
@@ -214,6 +294,50 @@ public class GameSession {
     @SuppressWarnings("LombokSetterMayBeUsed")
     public void setFogOfWarEnabled(boolean enabled) {
         this.fogOfWarEnabled = enabled;
+    }
+
+    public List<String> getRevealedCells() {
+        return new ArrayList<>(revealedCells);
+    }
+
+    public void revealCells(List<String> cells) {
+        revealedCells.addAll(cells);
+    }
+
+    public void hideCells(List<String> cells) {
+        revealedCells.removeAll(cells);
+    }
+
+    public void clearRevealedCells() {
+        revealedCells.clear();
+    }
+
+    // -------------------------------
+    // Gestión de áreas
+    // -------------------------------
+
+    public void addArea(Map<String, Object> area) {
+        areas.add(area);
+    }
+
+    public boolean removeArea(String areaId, Long userId, boolean isGM) {
+        return areas.removeIf(a -> areaId.equals(a.get("id")) &&
+                (isGM || userId.equals(a.get("ownerUserId"))));
+    }
+
+    public List<Map<String, Object>> getAreas() {
+        return Collections.unmodifiableList(areas);
+    }
+
+    public void clearAreas() {
+        areas.clear();
+    }
+
+    public boolean setTokenAuras(Long tokenId, String aurasJson) {
+        TokenState token = tokens.get(tokenId);
+        if (token == null) return false;
+        token.setAurasJson(aurasJson);
+        return true;
     }
 
     // -------------------------------

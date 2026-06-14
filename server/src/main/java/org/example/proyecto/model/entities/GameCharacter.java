@@ -33,6 +33,9 @@ public class GameCharacter {
     @Column(name = "portrait_path")
     private String portraitPath;
 
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
+
     @OneToMany(mappedBy = "character", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Token> tokens;
 

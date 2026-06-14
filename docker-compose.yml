@@ -1,0 +1,16 @@
+services:
+  vtt:
+    build: .
+    ports:
+      - "1000:1000"
+    volumes:
+      - vtt-data:/app/data        # SQLite database
+      - vtt-uploads:/app/uploads  # uploaded scene images
+    restart: unless-stopped
+    # Override with your own values if needed:
+    # environment:
+    #   - SPRING_PROFILES_ACTIVE=docker
+
+volumes:
+  vtt-data:
+  vtt-uploads:

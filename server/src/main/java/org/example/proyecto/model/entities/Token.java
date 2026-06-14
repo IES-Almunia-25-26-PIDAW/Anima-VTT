@@ -39,4 +39,7 @@ public class Token {
 
     @Column(name = "status_effects_json", columnDefinition = "TEXT")
     private String statusEffectsJson;
+
+    @Column(name = "auras_json", columnDefinition = "TEXT")
+    private String aurasJson;
 }
