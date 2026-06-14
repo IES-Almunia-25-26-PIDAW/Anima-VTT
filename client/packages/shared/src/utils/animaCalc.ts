@@ -100,13 +100,10 @@ export function calcKiBase(st: number): number {
 
 // Ki accumulation base from stat value (Tabla_Acum lookup)
 export function calcKiAccumBase(st: number): number {
-    if (st <= 4)  return 1;
-    if (st <= 7)  return 2;
-    if (st <= 10) return 3;
-    if (st <= 13) return 4;
-    if (st <= 16) return 5;
-    if (st <= 19) return 6;
-    return 7;
+    if (st <= 9)  return 1;
+    if (st <= 12) return 2;
+    if (st <= 15) return 3;
+    return 4;
 }
 
 // Zeón base from POD (Tabla_ValoresBase col 2)
