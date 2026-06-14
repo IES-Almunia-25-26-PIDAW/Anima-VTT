@@ -9,3 +9,5 @@ export { default as SignIn } from './components/SignIn';
 export { default as Lobby } from './components/Lobby';
 export { default as GameView } from './components/GameView';
 export { default as CharacterSheet } from './components/CharacterSheet';
+export { default as Journal } from './components/Journal';
+export { default as CharacterCreator } from './components/CharacterCreator';

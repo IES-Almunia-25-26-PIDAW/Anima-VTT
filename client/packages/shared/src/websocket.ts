@@ -42,10 +42,25 @@ export class WebSocketService {
     private reconnectAttempts = 0;
     private maxReconnectAttempts = 5;
     private reconnectDelay = 2000;
+    private pendingRejoin: JoinCampaignData | null = null;
 
     constructor(private url: string) {}
 
     connect(): Promise<void> {
+        // If the socket is already open, return immediately.
+        // React StrictMode double-invokes useEffect in dev; this guard prevents two WS connections.
+        if (this.ws !== null && this.ws.readyState === WebSocket.OPEN) {
+            return Promise.resolve();
+        }
+        // If still connecting, attach to the existing handshake instead of opening a second socket.
+        if (this.ws !== null && this.ws.readyState === WebSocket.CONNECTING) {
+            const existingWs = this.ws;
+            return new Promise((resolve, reject) => {
+                existingWs.addEventListener('open', () => resolve(), { once: true });
+                existingWs.addEventListener('error', (e) => reject(e), { once: true });
+            });
+        }
+
         return new Promise((resolve, reject) => {
             try {
                 this.ws = new WebSocket(this.url);
@@ -89,7 +104,14 @@ export class WebSocketService {
             console.log(`Reintentando conexión (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
 
             setTimeout(() => {
-                this.connect().catch(console.error);
+                this.connect()
+                    .then(() => {
+                        if (this.pendingRejoin) {
+                            console.log('Rejoining campaign after reconnect...');
+                            this.send('JOIN_CAMPAIGN', this.pendingRejoin);
+                        }
+                    })
+                    .catch(console.error);
             }, this.reconnectDelay * this.reconnectAttempts);
         }
     }
@@ -137,6 +159,7 @@ export class WebSocketService {
     }
 
     joinCampaign(data: JoinCampaignData) {
+        this.pendingRejoin = data;
         this.send('JOIN_CAMPAIGN', data);
     }
 
@@ -167,6 +190,7 @@ export class WebSocketService {
     }
 
     disconnect() {
+        this.pendingRejoin = null;
         if (this.ws) {
             this.ws.close();
             this.ws = null;
